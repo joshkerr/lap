@@ -458,10 +458,12 @@ async fn main() {
                     }
                 }
                 tauri::RunEvent::Exit { .. } => {
+                    // The Aptabase plugin is only registered when a key was
+                    // compiled in; flushing without it panics on quit.
                     if aptabase_enabled {
                         let _ = app_handle.track_event("app_exited", None);
+                        app_handle.flush_events_blocking();
                     }
-                    app_handle.flush_events_blocking();
                 }
 
                 // macOS: clicking the Dock icon of a running app reopens it.
