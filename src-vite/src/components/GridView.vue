@@ -284,6 +284,12 @@ function onDocumentPointerUp(event: PointerEvent) {
     event.stopPropagation();
     emit('item-drag-end', event);
   }
+  cancelPointerDrag();
+}
+
+// Also used when a drag leaves the window and continues as a native drag,
+// after which the page never sees the pointer come up.
+function cancelPointerDrag() {
   pendingPointerDrag = null;
   document.documentElement.style.userSelect = '';
   document.documentElement.style.webkitUserSelect = '';
@@ -990,7 +996,8 @@ defineExpose({
   getScrollTop,
   centerItem,
   refreshLayout: updateLayout,
-  getNextItemIndex
+  getNextItemIndex,
+  cancelPointerDrag,
 });
 
 </script>

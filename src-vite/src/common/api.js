@@ -1324,6 +1324,18 @@ export async function importFileBytes(bytes, name, folderId, folderPath) {
   }
 }
 
+// Continue a grid drag as a native OS drag, so the files can be dropped into
+// other apps. The mouse button must still be held.
+export async function startDragOut(filePaths, previewFileId) {
+  try {
+    await invoke('start_drag_out', { filePaths, previewFileId });
+    return true;
+  } catch (error) {
+    console.error('startDragOut error:', error);
+    return false;
+  }
+}
+
 export async function hasImportableClipboard() {
   try {
     return Boolean(await invoke('has_importable_clipboard'));

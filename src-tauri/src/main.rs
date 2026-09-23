@@ -22,6 +22,7 @@ mod t_cmds;
 mod t_common;
 mod t_config;
 mod t_dedup;
+mod t_drag;
 mod t_face;
 mod t_heif;
 mod t_http;
@@ -338,6 +339,7 @@ async fn main() {
             t_cmds::import_from_drag,
             t_cmds::get_drag_payload,
             t_cmds::import_file_bytes,
+            t_drag::start_drag_out,
             t_cmds::has_importable_clipboard,
             t_cmds::import_clipboard,
             t_cmds::delete_file,
