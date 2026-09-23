@@ -867,7 +867,7 @@ pub fn rename_folder(folder_path: &str, new_folder_name: &str) -> Option<String>
 
 /// Checks if a path exists, and if so, returns a new unique path
 /// by appending a number like (1), (2), etc.
-fn get_unique_path(path: PathBuf) -> PathBuf {
+pub(crate) fn get_unique_path(path: PathBuf) -> PathBuf {
     if !path.exists() {
         return path;
     }
@@ -1580,6 +1580,68 @@ pub fn image_mime_to_ext(content_type: &str) -> Option<&'static str> {
         "image/avif" => Some("avif"),
         "image/bmp" => Some("bmp"),
         _ => None,
+    }
+}
+
+/// Map a video MIME type to the canonical file extension, for the video
+/// formats Lap can index. Returns `None` for anything else.
+pub fn video_mime_to_ext(content_type: &str) -> Option<&'static str> {
+    let mime = content_type
+        .split(';')
+        .next()
+        .unwrap_or(content_type)
+        .trim();
+    match mime {
+        "video/mp4" => Some("mp4"),
+        "video/quicktime" => Some("mov"),
+        "video/x-m4v" => Some("m4v"),
+        "video/webm" => Some("webm"),
+        "video/x-matroska" => Some("mkv"),
+        "video/3gpp" => Some("3gp"),
+        "video/x-msvideo" | "video/avi" => Some("avi"),
+        "video/x-flv" => Some("flv"),
+        _ => None,
+    }
+}
+
+/// Whether `header` (the first bytes of a file) looks like a video container.
+pub fn is_video_header(header: &[u8]) -> bool {
+    let known = matches!(
+        detect_label_from_header(header, 2).as_deref(),
+        Some("MP4" | "MOV" | "3GP" | "MKV" | "AVI" | "FLV" | "ASF")
+    );
+    // Older QuickTime files can start with another atom instead of `ftyp`.
+    let quicktime = header.len() >= 8
+        && matches!(
+            &header[4..8],
+            b"moov" | b"mdat" | b"wide" | b"free" | b"skip"
+        );
+    known || quicktime
+}
+
+/// File name for a downloaded video: the last path component of `name`,
+/// ending in `.{ext}` unless it already has a video extension.
+pub fn video_file_name(name: Option<&str>, ext: &str) -> String {
+    let filename = name
+        .and_then(|name| Path::new(name).file_name())
+        .and_then(|name| name.to_str())
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+    match filename {
+        Some(filename) if get_file_type(filename) == Some(2) => filename.to_string(),
+        Some(filename) => {
+            let stem = Path::new(filename)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .filter(|stem| !stem.trim().is_empty())
+                .unwrap_or("video");
+            format!("{}.{}", stem, ext)
+        }
+        None => format!(
+            "VID_{}.{}",
+            chrono::Local::now().format("%Y%m%d_%H%M%S"),
+            ext
+        ),
     }
 }
 

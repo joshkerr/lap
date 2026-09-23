@@ -2,13 +2,13 @@
  * t_api.rs - Local Import API
  *
  * An opt-in HTTP server on 127.0.0.1 that lets local tools, such as a browser
- * extension, list albums and import images into a folder of the current
- * library. It is off by default and is enabled in Settings > Advanced.
+ * extension, list albums and import images and videos into a folder of the
+ * current library. It is off by default and is enabled in Settings > Advanced.
  *
  * Routes (all require `Authorization: Bearer <token>`):
  *   GET  /v1/status   app version and current library
  *   GET  /v1/albums   albums of the current library and their known folders
- *   POST /v1/import   import one image from a URL or from base64 data
+ *   POST /v1/import   import one image or video from a URL or base64 data
  *
  * Web pages cannot use the API: a request carrying a browser `Origin` must
  * come from an extension, and the `Host` header must name the loopback
@@ -395,13 +395,13 @@ struct ImportRequest {
     folder_id: Option<i64>,
     /// Destination album; the file goes into the album's root folder.
     album_id: Option<i64>,
-    /// Image to download (http or https).
+    /// Image or video to download (http or https).
     url: Option<String>,
     /// Referer sent with the download, for hosts that block hotlinking.
     referer: Option<String>,
-    /// Base64-encoded image bytes, as an alternative to `url`.
+    /// Base64-encoded file bytes, as an alternative to `url`.
     data: Option<String>,
-    /// MIME type of `data`, e.g. "image/jpeg".
+    /// MIME type of `data`, e.g. "image/jpeg" or "video/mp4".
     content_type: Option<String>,
     /// File name for `data` (URL imports are named from the response);
     /// required when `content_type` is absent.
@@ -486,13 +486,23 @@ async fn post_import(req: Request<Incoming>, app_handle: &AppHandle) -> ApiRespo
                         .unwrap_or("")
                         .trim()
                         .to_ascii_lowercase();
-                    if t_utils::image_mime_to_ext(&mime).is_none() {
+                    if let Some(ext) = t_utils::video_mime_to_ext(&mime) {
+                        if !t_utils::is_video_header(&bytes[..bytes.len().min(16)]) {
+                            return error_response(
+                                StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                                "data is not a video",
+                            );
+                        }
+                        let name = t_utils::video_file_name(name.as_deref(), ext);
+                        t_cmds::import_file_bytes(bytes, name, folder_id, folder_path).await
+                    } else if t_utils::image_mime_to_ext(&mime).is_some() {
+                        t_cmds::import_image_bytes(bytes, mime, name, folder_id, folder_path).await
+                    } else {
                         return error_response(
                             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                            &format!("Unsupported image format: {}", mime),
+                            &format!("Unsupported format: {}", mime),
                         );
                     }
-                    t_cmds::import_image_bytes(bytes, mime, name, folder_id, folder_path).await
                 }
                 (None, Some(name)) => {
                     t_cmds::import_file_bytes(bytes, name, folder_id, folder_path).await

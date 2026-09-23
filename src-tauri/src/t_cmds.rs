@@ -1864,17 +1864,19 @@ pub(crate) async fn import_url_inner(
         ));
     }
 
-    // Require a supported image content type — validate via the shared
-    // MIME→extension table so the response form the importer can name.
+    // Require a supported image or video content type — validate via the
+    // shared MIME→extension tables so the importer can name the file.
     let mime = {
         let ct = response
             .headers()
             .get("content-type")
             .and_then(|v| v.to_str().ok())
             .ok_or_else(|| "Response missing Content-Type header".to_string())?;
-        let m = ct.split(';').next().unwrap_or(ct).trim().to_string();
-        t_utils::image_mime_to_ext(&m).ok_or_else(|| format!("Unsupported image format: {}", m))?;
-        m
+        ct.split(';')
+            .next()
+            .unwrap_or(ct)
+            .trim()
+            .to_ascii_lowercase()
     };
     let original_name = response
         .headers()
@@ -1884,12 +1886,106 @@ pub(crate) async fn import_url_inner(
         .or_else(|| filename_from_url(response.url().as_str()))
         .or_else(|| filename_from_url(url));
 
+    if let Some(ext) = t_utils::video_mime_to_ext(&mime) {
+        return download_video(response, ext, original_name, folder_id, folder_path).await;
+    }
+    t_utils::image_mime_to_ext(&mime).ok_or_else(|| format!("Unsupported format: {}", mime))?;
+
     let bytes = response
         .bytes()
         .await
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
     import_image_bytes(bytes, mime, original_name, folder_id, folder_path).await
+}
+
+/// Largest video a URL import will download.
+const MAX_VIDEO_DOWNLOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Stream a video response into `folder_path` and index it. Videos can be
+/// large, so they go to disk chunk by chunk, into a hidden temporary file
+/// that only gets its real name once the download is complete and verified.
+async fn download_video(
+    mut response: reqwest::Response,
+    ext: &'static str,
+    original_name: Option<String>,
+    folder_id: i64,
+    folder_path: String,
+) -> Result<Option<AFile>, String> {
+    use tokio::io::AsyncWriteExt;
+
+    let too_large = || format!("Video is larger than {} GB", MAX_VIDEO_DOWNLOAD_BYTES >> 30);
+    if response
+        .content_length()
+        .is_some_and(|len| len > MAX_VIDEO_DOWNLOAD_BYTES)
+    {
+        return Err(too_large());
+    }
+
+    let temp_path =
+        Path::new(&folder_path).join(format!(".lap-download-{}.part", uuid::Uuid::new_v4()));
+    let download = async {
+        let mut file = tokio::fs::File::create(&temp_path)
+            .await
+            .map_err(|e| format!("Failed to create file: {}", e))?;
+        let mut header = Vec::with_capacity(16);
+        let mut size: u64 = 0;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("Failed to download video: {}", e))?
+        {
+            size += chunk.len() as u64;
+            if size > MAX_VIDEO_DOWNLOAD_BYTES {
+                return Err(too_large());
+            }
+            if header.len() < 16 {
+                let take = (16 - header.len()).min(chunk.len());
+                header.extend_from_slice(&chunk[..take]);
+                // Stop early when the server sent something else, such as
+                // an HTML error page, under a video content type.
+                if header.len() == 16 && !t_utils::is_video_header(&header) {
+                    return Err("Downloaded file is not a video".to_string());
+                }
+            }
+            file.write_all(&chunk)
+                .await
+                .map_err(|e| format!("Failed to write file: {}", e))?;
+        }
+        file.flush()
+            .await
+            .map_err(|e| format!("Failed to write file: {}", e))?;
+        if !t_utils::is_video_header(&header) {
+            return Err("Downloaded file is not a video".to_string());
+        }
+        Ok(())
+    };
+    if let Err(e) = download.await {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(e);
+    }
+
+    let name = t_utils::video_file_name(original_name.as_deref(), ext);
+    tauri::async_runtime::spawn_blocking(move || {
+        let dest = t_utils::get_unique_path(Path::new(&folder_path).join(name));
+        if let Err(e) = fs::rename(&temp_path, &dest) {
+            let _ = fs::remove_file(&temp_path);
+            return Err(format!("Failed to save video: {}", e));
+        }
+        let dest = dest.to_string_lossy().to_string();
+        let file_type = t_utils::get_file_type(&dest)
+            .ok_or_else(|| format!("Unsupported file type: {}", dest))?;
+        let now = chrono::Utc::now().timestamp_millis();
+        match AFile::add_to_db(folder_id, &dest, file_type, now) {
+            Ok((file, _)) => Ok(Some(file)),
+            Err(e) => {
+                let _ = fs::remove_file(&dest);
+                Err(e)
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("Failed to save file: {}", e))?
 }
 
 /// Save image bytes of a supported MIME type into a folder and index the
