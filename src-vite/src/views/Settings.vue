@@ -609,6 +609,76 @@
             </div>
           </div>
 
+          <!-- local import API -->
+          <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
+            <div class="flex items-center gap-2 text-base-content/30">
+              <span class="font-bold uppercase text-[10px] tracking-widest">{{ $t('settings.advanced.section_local_api') }}</span>
+            </div>
+            <div class="flex items-center justify-between gap-4 p-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+              <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                <div>{{ $t('settings.advanced.local_api_enable') }}</div>
+                <div
+                  class="text-xs"
+                  :class="localApi.enabled && localApi.error ? 'text-error' : 'text-base-content/30'"
+                  :title="localApi.error || ''"
+                >
+                  {{ localApiStatusText }}
+                </div>
+              </div>
+              <input
+                type="checkbox"
+                class="toggle toggle-primary toggle-sm shrink-0"
+                :checked="localApi.enabled"
+                :disabled="!isLocalApiLoaded"
+                @change="onLocalApiToggle"
+              />
+            </div>
+            <template v-if="localApi.enabled">
+              <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+                <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                  <div>{{ $t('settings.advanced.local_api_port') }}</div>
+                </div>
+                <input
+                  v-model.number="localApiPortInput"
+                  class="input input-bordered input-sm w-24 shrink-0"
+                  type="number"
+                  min="1024"
+                  max="65535"
+                  @keydown.enter.prevent="commitLocalApiPort"
+                  @blur="commitLocalApiPort"
+                >
+              </div>
+              <div class="flex items-center justify-between gap-4 px-1 rounded-box hover:bg-base-100/10 transition-colors duration-200">
+                <div class="min-w-0 flex flex-col gap-0.5 text-sm leading-5">
+                  <div>{{ $t('settings.advanced.local_api_token') }}</div>
+                  <div class="text-xs text-base-content/30">{{ $t('settings.advanced.local_api_token_hint') }}</div>
+                </div>
+                <div class="flex shrink-0 items-center gap-1">
+                  <input
+                    :value="localApi.token"
+                    class="input input-bordered input-sm w-40 font-mono text-xs"
+                    type="text"
+                    readonly
+                    spellcheck="false"
+                    @focus="selectInputText"
+                  >
+                  <TButton
+                    :icon="IconCopy"
+                    :buttonSize="'small'"
+                    :tooltip="$t('settings.advanced.local_api_copy_token')"
+                    @click="copyLocalApiToken"
+                  />
+                  <TButton
+                    :icon="IconRefresh"
+                    :buttonSize="'small'"
+                    :tooltip="$t('settings.advanced.local_api_regenerate_token')"
+                    @click="onRegenerateLocalApiToken"
+                  />
+                </div>
+              </div>
+            </template>
+          </div>
+
           <!-- diagnostics -->
           <div class="rounded-box p-2 space-y-2 bg-base-300/30 border border-base-content/5 shadow-sm">
             <div class="flex items-center gap-2 text-base-content/30">
@@ -710,6 +780,9 @@ import {
   getDbStorageDir,
   changeDbStorageDir,
   resetDbStorageDir,
+  getLocalApiStatus,
+  setLocalApiConfig,
+  regenerateLocalApiToken,
   isFaceIndexing,
   isUsingCustomDbStorage,
   getImageSearchModelStatus,
@@ -721,7 +794,7 @@ import {
 import { formatFileSize, isLinux, isMac, setTheme, SCALE_VALUES } from '@/common/utils';
 import { getShortcutLabels, ShortcutActionId, ShortcutPlatform } from '@/common/shortcuts';
 import { useToast } from '@/common/toast';
-import { IconClose, IconRestore } from '@/common/icons';
+import { IconClose, IconCopy, IconRefresh, IconRestore } from '@/common/icons';
 
 import TitleBar from '@/components/TitleBar.vue';
 import SettingsAbout from '@/components/SettingsAbout.vue';
@@ -765,6 +838,9 @@ const multilingualModelTotalBytes = ref(0);
 const isMultilingualModelAvailable = ref(false);
 const tiandituTokenInput = ref(String(config.settings.tiandituToken || ''));
 const tiandituTokenStatus = ref<'idle' | 'saved' | 'empty'>('idle');
+const localApi = ref({ enabled: false, port: 3581, token: '', running: false, error: null as string | null });
+const localApiPortInput = ref(3581);
+const isLocalApiLoaded = ref(false);
 let unlistenImageSearchModelDownloadProgress: (() => void) | null = null;
 
 const onRestoreDone = () => {
@@ -938,6 +1014,53 @@ function commitTiandituToken() {
   tiandituTokenInput.value = token;
   config.settings.tiandituToken = token;
   tiandituTokenStatus.value = token ? 'saved' : 'empty';
+}
+
+const localApiStatusText = computed(() => {
+  if (!localApi.value.enabled) return t('settings.advanced.local_api_hint');
+  if (localApi.value.error) return t('settings.advanced.local_api_error', { port: localApi.value.port });
+  return t('settings.advanced.local_api_running', { address: `127.0.0.1:${localApi.value.port}` });
+});
+
+function applyLocalApiStatus(status: any) {
+  if (!status) return false;
+  localApi.value = status;
+  localApiPortInput.value = status.port;
+  return true;
+}
+
+async function onLocalApiToggle(event: Event) {
+  const input = event.target as HTMLInputElement;
+  if (!applyLocalApiStatus(await setLocalApiConfig(input.checked, localApi.value.port))) {
+    input.checked = localApi.value.enabled;
+  }
+}
+
+async function commitLocalApiPort() {
+  const port = Number(localApiPortInput.value);
+  if (!Number.isInteger(port) || port < 1024 || port > 65535) {
+    localApiPortInput.value = localApi.value.port;
+    return;
+  }
+  if (port === localApi.value.port) return;
+  applyLocalApiStatus(await setLocalApiConfig(localApi.value.enabled, port));
+}
+
+async function copyLocalApiToken() {
+  try {
+    await navigator.clipboard.writeText(localApi.value.token);
+    toast.success(t('settings.advanced.local_api_token_copied'));
+  } catch (error) {
+    console.error('Failed to copy local API token:', error);
+  }
+}
+
+async function onRegenerateLocalApiToken() {
+  applyLocalApiStatus(await regenerateLocalApiToken());
+}
+
+function selectInputText(event: Event) {
+  (event.target as HTMLInputElement).select();
 }
 
 function onThumbnailSizeChange(event: Event) {
@@ -1420,6 +1543,7 @@ onMounted(async () => {
   applyWindowScale(Number(config.settings.scale || 1));
   dbStorageDir.value = (await getDbStorageDir()) || '';
   hasCustomDbStorage.value = await isUsingCustomDbStorage();
+  isLocalApiLoaded.value = applyLocalApiStatus(await getLocalApiStatus());
 
   
   // Show window after mount

@@ -1779,6 +1779,34 @@ export async function getStorageFileInfo() {
   return null;
 }
 
+// local import API (for browser extensions)
+export async function getLocalApiStatus() {
+  try {
+    return await invoke('get_local_api_status');
+  } catch (error) {
+    console.error('Failed to get local API status:', error);
+  }
+  return null;
+}
+
+export async function setLocalApiConfig(enabled, port) {
+  try {
+    return await invoke('set_local_api_config', { enabled, port });
+  } catch (error) {
+    console.error('Failed to set local API config:', error);
+  }
+  return null;
+}
+
+export async function regenerateLocalApiToken() {
+  try {
+    return await invoke('regenerate_local_api_token');
+  } catch (error) {
+    console.error('Failed to regenerate local API token:', error);
+  }
+  return null;
+}
+
 // image search
 
 // check ai status

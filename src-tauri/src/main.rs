@@ -15,6 +15,7 @@ use tauri_plugin_aptabase::EventTracker;
 
 mod t_ai;
 mod t_ai_png;
+mod t_api;
 mod t_apple_sidecar;
 mod t_cluster;
 mod t_cmds;
@@ -121,6 +122,9 @@ async fn main() {
             // Initialize video HTTP server for Linux
             #[cfg(target_os = "linux")]
             t_http::init_video_http_server();
+
+            // Start the local import API if enabled in settings
+            t_api::init(&_app.handle());
 
             // Cleanup video cache
             t_video::init_video_cache(&_app.handle());
@@ -393,6 +397,9 @@ async fn main() {
             t_cmds::get_package_info,
             t_cmds::get_build_time,
             t_cmds::get_storage_file_info,
+            t_api::get_local_api_status,
+            t_api::set_local_api_config,
+            t_api::regenerate_local_api_token,
             // ai
             t_cmds::check_ai_status,
             t_cmds::get_image_search_model_status,

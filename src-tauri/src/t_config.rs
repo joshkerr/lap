@@ -395,6 +395,31 @@ pub struct Library {
     pub hidden: bool,
 }
 
+/// Local import API settings (see t_api.rs). Off by default.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LocalApiConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_local_api_port")]
+    pub port: u16,
+    #[serde(default)]
+    pub token: String,
+}
+
+fn default_local_api_port() -> u16 {
+    3581
+}
+
+impl Default for LocalApiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: default_local_api_port(),
+            token: String::new(),
+        }
+    }
+}
+
 /// App configuration stored in app-config.json
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -404,6 +429,8 @@ pub struct AppConfig {
     pub last_selected_item_index: i64,
     #[serde(default)]
     pub db_storage_dir: Option<String>,
+    #[serde(default)]
+    pub local_api: LocalApiConfig,
     pub current_library_id: String,
     pub libraries: Vec<Library>,
 }
@@ -419,6 +446,7 @@ impl Default for AppConfig {
             debug: false,
             last_selected_item_index: default_last_selected_item_index(),
             db_storage_dir: None,
+            local_api: LocalApiConfig::default(),
             current_library_id: "default".to_string(),
             libraries: vec![Library {
                 id: "default".to_string(),
@@ -712,6 +740,7 @@ fn recover_app_config_from_library_dbs() -> Result<AppConfig, String> {
         debug: false,
         last_selected_item_index: default_last_selected_item_index(),
         db_storage_dir: None,
+        local_api: LocalApiConfig::default(),
         current_library_id,
         libraries,
     })

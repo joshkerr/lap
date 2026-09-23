@@ -1809,7 +1809,7 @@ pub async fn import_url(
     folder_id: i64,
     folder_path: String,
 ) -> Result<Option<AFile>, String> {
-    import_url_inner(url, folder_id, folder_path).await
+    import_url_inner(url, None, folder_id, folder_path).await
 }
 
 /// Import an image from the macOS drag pasteboard (for browser-sourced drags
@@ -1821,7 +1821,7 @@ pub async fn import_from_drag(
 ) -> Result<Option<AFile>, String> {
     let url = crate::t_pasteboard::get_drag_image_url()
         .ok_or_else(|| "No image URL found in drag pasteboard".to_string())?;
-    import_url_inner(&url, folder_id, folder_path).await
+    import_url_inner(&url, None, folder_id, folder_path).await
 }
 
 #[derive(Debug, Serialize)]
@@ -1839,12 +1839,18 @@ pub fn get_drag_payload() -> DragPayload {
     }
 }
 
-async fn import_url_inner(
+pub(crate) async fn import_url_inner(
     url: &str,
+    referer: Option<&str>,
     folder_id: i64,
     folder_path: String,
 ) -> Result<Option<AFile>, String> {
-    let response = reqwest::get(url)
+    let mut request = reqwest::Client::new().get(url);
+    if let Some(referer) = referer {
+        request = request.header(reqwest::header::REFERER, referer);
+    }
+    let response = request
+        .send()
         .await
         .map_err(|e| format!("Failed to download image: {}", e))?;
 
@@ -1883,13 +1889,25 @@ async fn import_url_inner(
         .await
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
-    let dest_folder = folder_path.clone();
+    import_image_bytes(bytes, mime, original_name, folder_id, folder_path).await
+}
+
+/// Save image bytes of a supported MIME type into a folder and index the
+/// file, preserving `original_name` when it is usable.
+pub(crate) async fn import_image_bytes(
+    bytes: impl AsRef<[u8]> + Send + 'static,
+    mime: String,
+    original_name: Option<String>,
+    folder_id: i64,
+    dest_folder: String,
+) -> Result<Option<AFile>, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        let bytes = bytes.as_ref();
         let new_path = original_name
             .and_then(|name| {
-                t_utils::save_downloaded_bytes_with_name(&bytes, &mime, &name, &dest_folder)
+                t_utils::save_downloaded_bytes_with_name(bytes, &mime, &name, &dest_folder)
             })
-            .or_else(|| t_utils::save_bytes_to_folder(&bytes, &mime, &dest_folder))
+            .or_else(|| t_utils::save_bytes_to_folder(bytes, &mime, &dest_folder))
             .ok_or_else(|| "Failed to save downloaded image".to_string())?;
         let file_type = t_utils::get_file_type(&new_path)
             .ok_or_else(|| format!("Unsupported file type: {}", new_path))?;

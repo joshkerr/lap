@@ -3404,6 +3404,7 @@ let unlistenImageEditor: (() => void) | null = null;
 let unlistenFaceIndexProgress: (() => void) | null = null;
 let unlistenLibraryTotalRefreshed: (() => void) | null = null;
 let unlistenImportFilesAdded: (() => void) | null = null;
+let unlistenLocalApiFilesImported: (() => void) | null = null;
 let unlistenPasteClipboard: (() => void) | null = null;
 
 let resizeObserver: ResizeObserver | null = null;
@@ -3482,7 +3483,35 @@ onBeforeUnmount(() => {
   if (unlistenImageEditor) unlistenImageEditor();
   if (unlistenLibraryTotalRefreshed) unlistenLibraryTotalRefreshed();
   if (unlistenImportFilesAdded) unlistenImportFilesAdded();
+  if (unlistenLocalApiFilesImported) unlistenLocalApiFilesImported();
+  if (localApiImportTimer) clearTimeout(localApiImportTimer);
 });
+
+// The local import API (browser extension) sends one file per request;
+// coalesce a burst of imports into a single refresh and toast.
+const localApiImportedAlbumIds = new Set<number>();
+let localApiImportedCount = 0;
+let localApiImportTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueLocalApiImportRefresh(albumId: number) {
+  if (albumId > 0) localApiImportedAlbumIds.add(albumId);
+  localApiImportedCount++;
+  if (localApiImportTimer) clearTimeout(localApiImportTimer);
+  localApiImportTimer = setTimeout(async () => {
+    localApiImportTimer = null;
+    const albumIds = Array.from(localApiImportedAlbumIds);
+    const count = localApiImportedCount;
+    localApiImportedAlbumIds.clear();
+    localApiImportedCount = 0;
+
+    await refreshAffectedAlbums(albumIds);
+    await refreshLibraryTotalCount();
+    for (const albumId of albumIds) {
+      await refreshImportedAlbumContent(albumId);
+    }
+    toast.success(t('msgbox.drop_import.success', { count }));
+  }, 300);
+}
 
 async function refreshImportedAlbumContent(albumId: number) {
   if (
@@ -5131,6 +5160,9 @@ onMounted( async() => {
   });
   unlistenImportFilesAdded = await listen('import-files-added', (event: any) => {
     void refreshImportedAlbumContent(Number(event.payload?.albumId || 0));
+  });
+  unlistenLocalApiFilesImported = await listen('local-api-files-imported', (event: any) => {
+    queueLocalApiImportRefresh(Number(event.payload?.albumId || 0));
   });
   unlistenPasteClipboard = await listen('paste-clipboard-to-folder', (event: any) => {
     const albumId = Number(event.payload?.albumId || 0);
