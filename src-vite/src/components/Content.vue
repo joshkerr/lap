@@ -4626,6 +4626,13 @@ function isTextInputFocused() {
 
 // Global keydown handler (from Tauri)
 const handleKeyDown = (e: any) => {
+  // Escape cancels a drag in progress, as in the OS's own drags: releasing
+  // the mouse afterwards drops nothing. (Outside the window the OS handles it.)
+  if (isContentInternalDrag.value && e.payload?.key === 'Escape') {
+    void clearContentInternalDrag();
+    return;
+  }
+
   if (uiStore.activePane === 'left-sidebar') {
     return;
   }
