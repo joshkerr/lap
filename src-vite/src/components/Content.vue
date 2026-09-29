@@ -734,7 +734,7 @@ import { getAlbum, getAllAlbums, recountAlbum, getQueryCountAndSum, getQueryTime
          copyImages, renameFile, moveFile, moveFileOutsideLibrary, copyFile, deleteFile, deleteFilePermanently, batchDeleteFiles, editFileComment, getFileThumb, getFileThumbs, getFileInfo,
          setFileRotate, setFileFavorite, setFileRating, setFileCullingFlag, batchUpdateFileMetadata, getTagsForFile, getTagGroupName, searchSimilarImages, generateEmbedding,
          revealPath, getTagName, indexAlbum, listenIndexProgress, listenIndexFinished, setAlbumCover, setDesktopWallpaper,
-         updateFileInfo, importFile, importUrl, importFileBytes, getDragPayload, importClipboard, addFileToDb, checkFileExists, cancelIndexing as cancelIndexingApi, selectFolder, getFacesForFile, listenFaceIndexProgress,
+         updateFileInfo, importFile, importUrl, importFileBytes, getDragPayload, startDragOut, importClipboard, addFileToDb, checkFileExists, cancelIndexing as cancelIndexingApi, selectFolder, getFacesForFile, listenFaceIndexProgress,
          openFilesWithApp, getAppConfig, getIndexRecoveryInfo, clearIndexRecoveryInfo, setLastSelectedItemIndex,
          dedupDelete, getQueryFilePosition, getFolderSearchExcluded,
          listCollections, createCollection, addFilesToCollection, removeFilesFromCollection, getFileCollections, getCollectionCountAndSum, getCollectionFiles, getCollectionGroupedQueryRows, getCollectionGroupFileIds, getCollectionQueryFileIds, fetchFolder, isDirectoryAccessible, checkAlbumAccessibility, addTagToFile } from '@/common/api';
@@ -2553,6 +2553,7 @@ let domDragEnd: ((e: DragEvent) => void) | null = null;
 let domDrop: ((e: DragEvent) => void) | null = null;
 let dragGhost: HTMLElement | null = null;
 let dragGhostAction: HTMLElement | null = null;
+let isNativeDragOut = false; // a grid drag continued outside the window as a native drag
 let pointerDropTarget: HTMLElement | null = null;
 let pointerDragUsesSelection = false;
 let pointerDragFiles: Array<{
@@ -2600,6 +2601,20 @@ function getExternalFileDropPaths(uris: string[]) {
   return uris
     .map(fileUrlToPath)
     .filter((path): path is string => !!path);
+}
+
+function endNativeDragOut() {
+  isNativeDragOut = false;
+}
+
+// Lap's own files, dragged out of the window and back in: refuse the drop so
+// they are not imported again and the webview does not open them.
+function refuseOwnDragOut(event: DragEvent) {
+  if (!isNativeDragOut) return false;
+  event.preventDefault();
+  if (event.dataTransfer) event.dataTransfer.dropEffect = 'none';
+  clearDropOverlay();
+  return true;
 }
 
 function hasExternalDomDrop(event: DragEvent) {
@@ -2914,6 +2929,13 @@ function createDragGhost(
 
 function updateContentDragPosition(event: PointerEvent) {
   if (!dragGhost || (event.clientX === 0 && event.clientY === 0)) return;
+  if (
+    event.clientX < 0 || event.clientY < 0
+    || event.clientX > window.innerWidth || event.clientY > window.innerHeight
+  ) {
+    void continueDragOutsideWindow();
+    return;
+  }
   dragGhost.style.transform = `translate3d(${Math.round(event.clientX - dragGhostHotspotX)}px, ${Math.round(event.clientY - dragGhostHotspotY)}px, 0)`;
   const elementAtPointer = document.elementFromPoint(event.clientX, event.clientY);
   if (elementAtPointer?.closest('[data-collection-tray-root]') && !config.collectionTray.expanded) {
@@ -2929,6 +2951,33 @@ function updateContentDragPosition(event: PointerEvent) {
     ?.closest('[data-file-drop-path][data-file-drop-album-id], [data-collection-drop-id], [data-collection-drop-new]') as HTMLElement | null;
   setPointerDropTarget(target);
   updateDragGhostAction(event);
+}
+
+// The grid drag is drawn in the page and cannot leave the window. Once the
+// pointer leaves it, end that drag without dropping and continue as a native
+// drag carrying the files, so they can be dropped into other apps.
+async function continueDragOutsideWindow() {
+  const files = pointerDragFiles;
+  if (isNativeDragOut || !files?.length) return;
+  isNativeDragOut = true;
+  const usesSelection = pointerDragUsesSelection;
+  gridViewRef.value?.cancelPointerDrag();
+  void clearContentInternalDrag();
+
+  const paths = new Map(files.map((file: any) => [Number(file.id), String(file.file_path || '')]));
+  if (usesSelection) {
+    // Selected files that are not loaded in the list yet.
+    const missingIds = Array.from(selectedFileIds).filter(id => !paths.has(id));
+    if (missingIds.length > 0) {
+      for (const file of (await getFilesByIds(missingIds)) || []) {
+        paths.set(Number(file.id), String(file.file_path || ''));
+      }
+    }
+  }
+  const filePaths = Array.from(paths.values()).filter(Boolean);
+  if (!(await startDragOut(filePaths, Number(files[0].id) || null))) {
+    isNativeDragOut = false;
+  }
 }
 
 function markContentInternalDrag({
@@ -3458,6 +3507,8 @@ let unlistenImageEditor: (() => void) | null = null;
 let unlistenFaceIndexProgress: (() => void) | null = null;
 let unlistenLibraryTotalRefreshed: (() => void) | null = null;
 let unlistenImportFilesAdded: (() => void) | null = null;
+let unlistenDragOutFinished: (() => void) | null = null;
+let unlistenLocalApiFilesImported: (() => void) | null = null;
 let unlistenPasteClipboard: (() => void) | null = null;
 
 let resizeObserver: ResizeObserver | null = null;
@@ -3536,7 +3587,37 @@ onBeforeUnmount(() => {
   if (unlistenImageEditor) unlistenImageEditor();
   if (unlistenLibraryTotalRefreshed) unlistenLibraryTotalRefreshed();
   if (unlistenImportFilesAdded) unlistenImportFilesAdded();
+  if (unlistenDragOutFinished) unlistenDragOutFinished();
+  document.removeEventListener('pointerdown', endNativeDragOut, true);
+  if (unlistenLocalApiFilesImported) unlistenLocalApiFilesImported();
+  if (localApiImportTimer) clearTimeout(localApiImportTimer);
 });
+
+// The local import API (browser extension) sends one file per request;
+// coalesce a burst of imports into a single refresh and toast.
+const localApiImportedAlbumIds = new Set<number>();
+let localApiImportedCount = 0;
+let localApiImportTimer: ReturnType<typeof setTimeout> | null = null;
+
+function queueLocalApiImportRefresh(albumId: number) {
+  if (albumId > 0) localApiImportedAlbumIds.add(albumId);
+  localApiImportedCount++;
+  if (localApiImportTimer) clearTimeout(localApiImportTimer);
+  localApiImportTimer = setTimeout(async () => {
+    localApiImportTimer = null;
+    const albumIds = Array.from(localApiImportedAlbumIds);
+    const count = localApiImportedCount;
+    localApiImportedAlbumIds.clear();
+    localApiImportedCount = 0;
+
+    await refreshAffectedAlbums(albumIds);
+    await refreshLibraryTotalCount();
+    for (const albumId of albumIds) {
+      await refreshImportedAlbumContent(albumId);
+    }
+    toast.success(t('msgbox.drop_import.success', { count }));
+  }, 300);
+}
 
 async function refreshImportedAlbumContent(albumId: number) {
   if (
@@ -4609,6 +4690,13 @@ function isTextInputFocused() {
 
 // Global keydown handler (from Tauri)
 const handleKeyDown = (e: any) => {
+  // Escape cancels a drag in progress, as in the OS's own drags: releasing
+  // the mouse afterwards drops nothing. (Outside the window the OS handles it.)
+  if (isContentInternalDrag.value && e.payload?.key === 'Escape') {
+    void clearContentInternalDrag();
+    return;
+  }
+
   if (uiStore.activePane === 'left-sidebar') {
     return;
   }
@@ -5194,8 +5282,14 @@ onMounted( async() => {
       updateContent(true);
     }
   });
+  unlistenDragOutFinished = await listen('drag-out-finished', endNativeDragOut);
+  // Safety net if that event is ever lost: a new click means the drag is over.
+  document.addEventListener('pointerdown', endNativeDragOut, true);
   unlistenImportFilesAdded = await listen('import-files-added', (event: any) => {
     void refreshImportedAlbumContent(Number(event.payload?.albumId || 0));
+  });
+  unlistenLocalApiFilesImported = await listen('local-api-files-imported', (event: any) => {
+    queueLocalApiImportRefresh(Number(event.payload?.albumId || 0));
   });
   unlistenPasteClipboard = await listen('paste-clipboard-to-folder', (event: any) => {
     const albumId = Number(event.payload?.albumId || 0);
@@ -5208,6 +5302,7 @@ onMounted( async() => {
   // Drag-drop file import. Tauri native drag/drop is disabled so internal
   // HTML5 drag interactions (e.g. sortable lists) keep their drop events.
   domDragEnter = (e: DragEvent) => {
+    if (refuseOwnDragOut(e)) return;
     if (isInternalReorderActive()) {
       clearDropOverlay();
       return;
@@ -5230,6 +5325,7 @@ onMounted( async() => {
     if (dragOverCount.value === 0) isDragOver.value = false;
   };
   domDragOver = (e: DragEvent) => {
+    if (refuseOwnDragOut(e)) return;
     if (isInternalReorderActive()) {
       clearDropOverlay();
       return;
@@ -5238,6 +5334,7 @@ onMounted( async() => {
     e.preventDefault();
   };
   domDrop = async (e: DragEvent) => {
+    if (refuseOwnDragOut(e)) return;
     if (isInternalReorderActive() || isContentInternalDrag.value) {
       clearDropOverlay();
       clearContentInternalDrag();

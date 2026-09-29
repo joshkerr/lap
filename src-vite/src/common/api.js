@@ -1327,6 +1327,18 @@ export async function importFileBytes(bytes, name, folderId, folderPath) {
   }
 }
 
+// Continue a grid drag as a native OS drag, so the files can be dropped into
+// other apps. The mouse button must still be held.
+export async function startDragOut(filePaths, previewFileId) {
+  try {
+    await invoke('start_drag_out', { filePaths, previewFileId });
+    return true;
+  } catch (error) {
+    console.error('startDragOut error:', error);
+    return false;
+  }
+}
+
 export async function hasImportableClipboard() {
   try {
     return Boolean(await invoke('has_importable_clipboard'));
@@ -1778,6 +1790,34 @@ export async function getStorageFileInfo() {
     }
   } catch (error) {
     console.error('Failed to get db file size:', error);
+  }
+  return null;
+}
+
+// local import API (for browser extensions)
+export async function getLocalApiStatus() {
+  try {
+    return await invoke('get_local_api_status');
+  } catch (error) {
+    console.error('Failed to get local API status:', error);
+  }
+  return null;
+}
+
+export async function setLocalApiConfig(enabled, port) {
+  try {
+    return await invoke('set_local_api_config', { enabled, port });
+  } catch (error) {
+    console.error('Failed to set local API config:', error);
+  }
+  return null;
+}
+
+export async function regenerateLocalApiToken() {
+  try {
+    return await invoke('regenerate_local_api_token');
+  } catch (error) {
+    console.error('Failed to regenerate local API token:', error);
   }
   return null;
 }
