@@ -9,7 +9,7 @@
   </p>
 </div>
 
-[English](../README.md) | Deutsch | [Français](README.fr.md) | [Español](README.es.md) | [Português](README.pt.md) | [Русский](README.ru.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) 
+[English](../README.md) | Deutsch | [Français](README.fr.md) | [Español](README.es.md) | [Português](README.pt.md) | [Polski](README.pl.md) | [Nederlands](README.nl.md) | [Русский](README.ru.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 Lap ist ein quelloffener, lokal orientierter Fotomanager zum Durchsuchen von Familienalben, zum schnellen Finden alter Fotos und zum Offline-Verwalten großer persönlichen Medienbibliotheken.
 Es ist eine datenschutzorientierte Alternative zu Cloud-Fotodiensten: kein erzwungener Upload, lokale KI-Suche, ordnerorientierter Workflow und kostenlos nutzbar.
@@ -174,6 +174,8 @@ cargo install tauri-cli --version "^2.0.0" --locked
 cd src-vite && pnpm install && cd ..
 cargo tauri dev
 ```
+
+Distributionspakete können das System-libheif (1.17 oder neuer) anstelle des gebündelten libheif und libde265 verwenden. Setze `LAP_SYSTEM_LIBHEIF=1` für den Build. Die Submodule `third_party/libheif` und `third_party/libde265` werden dann nicht benötigt. Die HEVC-Dekodierung hängt von den Codec-Plugins des System-libheif ab.
 
 ## Unterstützte Formate
 

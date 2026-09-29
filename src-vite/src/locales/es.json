@@ -72,7 +72,7 @@
     },
     "edit": {
       "title_add": "Nuevo álbum",
-      "title": "Info del álbum",
+      "title": "Editar álbum",
       "folder": "Carpeta",
       "select_folder": "Seleccionar carpeta",
       "name": "Nombre",
@@ -92,10 +92,32 @@
       "scanning_files": "{current}/{total} archivos ({size})",
       "files_count": "{count} archivos ({size})",
       "files_count_without_size": "{count} archivos",
+      "section_scan_preview": "Vista previa del escaneo",
+      "excluded_files": "Excluidos",
+      "preview_updating": "Actualizando…",
+      "preview_unavailable": "Vista previa del escaneo no disponible",
       "files_counting": "Contando archivos...",
       "created_at": "Creado el",
       "modified_at": "Modificado el",
-      "last_scan_time": "Último escaneo"
+      "last_scan_time": "Último escaneo",
+      "tab_general": "General",
+      "file_types": "Excluir tipos de archivo",
+      "photos": "Fotos",
+      "raw": "RAW",
+      "file_types_required": "Mantén al menos un tipo de archivo incluido.",
+      "pixel_filter": "Excluir imágenes pequeñas",
+      "filter_off": "Desactivado",
+      "pixel_hint": "Excluye las imágenes cuyo ancho y alto sean inferiores a este valor.",
+      "excluded_folders": "Excluir carpetas",
+      "excluded_hint": "Selecciona las subcarpetas de primer nivel que quieras excluir, incluido todo su contenido.",
+      "search_folders": "Buscar carpetas",
+      "loading_folders": "Cargando carpetas…",
+      "folders_unavailable": "Las carpetas no están disponibles. Se conservan las exclusiones guardadas.",
+      "no_subfolders": "No hay subcarpetas de primer nivel.",
+      "save_update": "Guardar y actualizar",
+      "save_failed": "No se pudo guardar la configuración del álbum. Inténtalo de nuevo.",
+      "file_types_hint": "Los tipos de archivo seleccionados se excluyen de este álbum.",
+      "tab_exclusions": "Exclusiones"
     },
     "no_albums": {
       "title": "Aún no hay álbumes",
@@ -639,7 +661,7 @@
     },
     "album": {
       "add": "Nuevo álbum",
-      "edit": "Info del álbum...",
+      "edit": "Editar álbum...",
       "scan": "Escanear álbum",
       "reorder": "Reordenar",
       "pause_scan": "Pausar escaneo",
@@ -927,6 +949,15 @@
     },
     "select_file": {
       "error": "Fallo al seleccionar archivo."
+    },
+    "file_refresh": {
+      "status": "Estado de actualización",
+      "running": "Actualizando…",
+      "cancelling": "Cancelando…",
+      "cancelled": "Cancelado",
+      "complete": "Completado",
+      "succeeded": "Actualizados: {count}",
+      "failed": "Fallidos: {count}"
     },
     "image_editor": {
       "title": "Editar",
@@ -1231,9 +1262,6 @@
       "section_file_display": "Visualización de archivos",
       "group_raw_jpeg_pairs": "Agrupar pares RAW",
       "group_raw_jpeg_pairs_hint": "Mostrar archivos RAW y JPEG/HEIC coincidentes como un solo elemento",
-      "small_file_filter": "Filtro de archivos pequeños",
-      "small_file_filter_hint": "Oculta archivos cuando el ancho y el alto son menores que el tamaño seleccionado",
-      "small_file_filter_options": ["Desactivado", "160 px", "320 px", "640 px"],
       "section_sorting": "Orden",
       "folder_sort": "Carpetas",
       "folder_sort_hint": "Orden de clasificación para las carpetas mostradas dentro de los álbumes",
@@ -1265,9 +1293,6 @@
     "grid": {
       "title": "Diseño",
       "section_grid": "Cuadrícula",
-      "dbl_click_thumbnail": "Doble clic en la miniatura",
-      "dbl_click_quick_preview": "Vista rápida",
-      "dbl_click_new_window": "Abrir en una ventana nueva",
       "style": "Estilo",
       "style_options": [
         "Vista de tarjeta",

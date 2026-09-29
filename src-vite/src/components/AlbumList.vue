@@ -230,9 +230,10 @@
     <AlbumEdit
       v-if="showAlbumEdit"
       :albumId="isNewAlbum ? 0 : editingAlbumId"
+      :busy="albumEditBusy"
       :initialFolderPath="isNewAlbum ? newAlbumFolderPath : ''"
       @ok="clickEditAlbum"
-      @cancel="showAlbumEdit = false"
+      @cancel="!albumEditBusy && (showAlbumEdit = false)"
     />
 
     <ImportOrganizeDialog
@@ -258,6 +259,7 @@
 
 <script setup lang="ts">
 
+import { useToast } from '@/common/toast';
 import { ref, watch, computed, onMounted, onBeforeUnmount, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { VueDraggable } from 'vue-draggable-plus'
@@ -291,7 +293,7 @@ import {
   IconAdd,
   IconDownload,
   IconMore,
-  IconInformation,
+  IconEdit,
   IconRemove,
   IconUpdate,
   IconUpdateOff,
@@ -344,12 +346,10 @@ let albumCountRequest = 0;
 async function refreshAlbumVisibleCounts() {
   const request = ++albumCountRequest;
   const libraryId = libConfig._libraryId;
-  const smallFileFilter = Number(config.settings.smallFileFilter || 0);
-  const counts = await getAlbumVisibleCounts(smallFileFilter);
+  const counts = await getAlbumVisibleCounts();
   if (
     request !== albumCountRequest
     || libraryId !== libConfig._libraryId
-    || smallFileFilter !== Number(config.settings.smallFileFilter || 0)
     || !counts
   ) return;
   libConfig.album.counts = counts;
@@ -361,6 +361,7 @@ const isMainSourceActive = computed(() => libConfig.activePane !== 'collection')
 const albumListRootRef = ref<HTMLElement | null>(null);
 
 // message boxes
+const albumEditBusy = ref(false);
 const showAlbumEdit = ref(false);           // show edit album
 const showRemoveAlbumMsgbox = ref(false);   // show remove album
 const importAlbum = ref<Album | null>(null);
@@ -674,7 +675,7 @@ const getMoreMenuItems = async (album: any) => {
   return [
     {
       label: localeMsg.value.menu.album.edit,
-      icon: IconInformation,
+      icon: IconEdit,
       action: () => openAlbumEdit(album.id)
     },
     {
@@ -834,6 +835,9 @@ onMounted( async () => {
       const updatedAlbum = await getAlbum(album_id);
       if (updatedAlbum) {
         album.indexed = updatedAlbum.indexed;
+        album.file_types = updatedAlbum.file_types;
+        album.small_image_filter = updatedAlbum.small_image_filter;
+        album.excluded_folders = updatedAlbum.excluded_folders;
         album.total = updatedAlbum.total;
         album.cover_file_id = updatedAlbum.cover_file_id;
         album.last_scan_time = updatedAlbum.last_scan_time;
@@ -916,11 +920,6 @@ watch(() => config.settings.folderSort, async () => {
   }
 });
 
-watch(() => config.settings.smallFileFilter, () => {
-  if (isMainPane.value && libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.ALBUM) {
-    void refreshAlbumVisibleCounts();
-  }
-});
 
 watch(() => [config.main.sidebarIndex, libConfig.activePane], () => {
   if (isMainPane.value && libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.ALBUM) {
@@ -983,39 +982,71 @@ const handleRootRenamed = (payload: { albumId: number; newPath: string }) => {
 };
 
 /// edit album information or add new album
-const clickEditAlbum = async (folderPathParam: string, newName: string, newDescription: string, isNew: boolean) => {
-  if (isNew) {
-    // Add new album
-    const newAlbum = await addAlbum(folderPathParam);
-    if (newAlbum) {
+const clickEditAlbum = async (folderPathParam: string, newName: string, newDescription: string, isNew: boolean,
+  filters: { fileTypes: number; smallImageFilter: number; excludedFolders: string[] }, filtersChanged: boolean) => {
+  if (albumEditBusy.value) return;
+  albumEditBusy.value = true;
+  let interruptedScan: { id: number; libraryId: string; position: number; status: number; paused: boolean } | null = null;
+  try {
+    if (isNew) {
+      const newAlbum = await addAlbum(folderPathParam, newName, newDescription, filters);
+      if (!newAlbum) throw new Error('Could not create album');
       config.leftPanel.show = true;
-      // Update album name and description if different from folder name
-      if (newName !== newAlbum.name || newDescription) {
-        await editAlbum(newAlbum.id, newName, newDescription);
-        newAlbum.name = newName;
-        newAlbum.description = newDescription;
-      }
       albums.value.push(newAlbum);
       clickAlbum(newAlbum);
       showAlbumEdit.value = false;
-
-      tauriEmit('albums-refreshed');
-      tauriEmit('library-total-refreshed');
-
-      // add the new album to the index queue
-      libConfig.index.status = 1;
-      removePausedAlbum(newAlbum.id);
-      libConfig.index.albumQueue.push(newAlbum.id);   
-    }
-  } else {
-    // Edit existing album
-    const result = await editAlbum(editingAlbumId.value, newName, newDescription);
-    if(result && editingAlbum.value) {
-      editingAlbum.value.name = newName;
-      editingAlbum.value.description = newDescription;
-      tauriEmit('album-updated', { albumId: editingAlbumId.value, name: newName, description: newDescription });
+      await tauriEmit('albums-refreshed');
+      await tauriEmit('library-total-refreshed');
+      await clickIndexAlbum(newAlbum.id);
+    } else {
+      const current = editingAlbum.value;
+      const scopeChanged = current?.file_types !== filters.fileTypes
+        || Number(current?.small_image_filter || 0) !== filters.smallImageFilter
+        || JSON.stringify([...(current?.excluded_folders || [])].sort()) !== JSON.stringify(filters.excludedFolders);
+      if (scopeChanged) {
+        const id = editingAlbumId.value;
+        const position = getAlbumQueueIndex(id, libConfig.index.albumQueue as any[]);
+        if (position >= 0) interruptedScan = {
+          id, position, libraryId: libConfig._libraryId,
+          status: Number(libConfig.index.status), paused: isAlbumPaused(id),
+        };
+        await clickCancelIndexAlbum(id);
+      }
+      const result = await editAlbum(editingAlbumId.value, newName, newDescription, filters);
+      if (!result) throw new Error('Could not save album');
+      if (current) Object.assign(current, { name: newName, description: newDescription,
+        file_types: filters.fileTypes, small_image_filter: filters.smallImageFilter, excluded_folders: filters.excludedFolders });
+      if (scopeChanged && current && filters.excludedFolders.some(folder => {
+        const root = `${current.path.replace(/[\\/]$/, '')}/${folder}`.replaceAll('\\', '/');
+        const selected = String(selection.folderPath.value || '').replaceAll('\\', '/');
+        return selected === root || selected.startsWith(`${root}/`);
+      })) clickAlbum(current);
       showAlbumEdit.value = false;
+      await tauriEmit('album-updated', { albumId: editingAlbumId.value, name: newName, description: newDescription, filtersChanged });
+      if (filtersChanged) {
+        libConfig.clearLazySidebarCounts();
+        await tauriEmit('albums-refreshed', { albums: await getAllAlbums(), refreshFolders: true });
+        await refreshAlbumVisibleCounts();
+        await tauriEmit('library-total-refreshed');
+      }
+      if (scopeChanged) await clickIndexAlbum(editingAlbumId.value);
     }
+  } catch (error) {
+    console.error('Saving album failed:', error);
+    // Restore only scans interrupted by this save, never an already-paused album.
+    if (interruptedScan && interruptedScan.libraryId === libConfig._libraryId
+      && getAlbumQueueIndex(interruptedScan.id, libConfig.index.albumQueue as any[]) === -1) {
+      const { id, position, status, paused } = interruptedScan;
+      const queue = libConfig.index.albumQueue as number[];
+      // Another album may already be running; keep that queue head in place.
+      queue.splice(Math.min(queue.length, Math.max(queue.length ? 1 : 0, position)), 0, id);
+      if (!paused) removePausedAlbum(id);
+      if (status === 1) syncIndexStatus();
+      else if (queue.length === 1) libConfig.index.status = status;
+    }
+    useToast().error(t('album.edit.save_failed'));
+  } finally {
+    albumEditBusy.value = false;
   }
 };
 

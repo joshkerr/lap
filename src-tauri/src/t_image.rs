@@ -131,6 +131,11 @@ pub fn get_image_dimensions(file_path: &str) -> Result<(u32, u32), String> {
         if let Ok(dimensions) = crate::t_heif::get_heif_dimensions(file_path) {
             return Ok(dimensions);
         }
+        if let Ok(metadata) = crate::t_video::get_video_metadata(file_path) {
+            if metadata.width > 0 && metadata.height > 0 {
+                return Ok((metadata.width, metadata.height));
+            }
+        }
     }
 
     // Catch potential panics in the third-party imagesize crate
@@ -692,138 +697,37 @@ pub fn get_image_thumbnail(
     }
 }
 
-#[derive(Debug)]
-struct EmbeddedJpegCandidate {
-    data: Vec<u8>,
-    width: u32,
-    height: u32,
-    max_edge: u32,
+fn select_embedded_jpeg(
+    file_path: &str,
+    thumbnail_size: Option<u32>,
+) -> Result<Option<crate::t_embedded_jpeg::Preview>, String> {
+    let mut file = File::open(file_path).map_err(|e| e.to_string())?;
+    let mut header = [0; 4];
+    file.read_exact(&mut header).map_err(|e| e.to_string())?;
+    if header == *b"II\x2a\x00" || header == *b"MM\x00\x2a" {
+        // TIFF offsets refer to the file, not the bounded metadata buffer.
+        let exif = crate::t_embedded_jpeg::read_tiff_metadata(&mut file)?;
+        crate::t_embedded_jpeg::select(&mut file, &exif, thumbnail_size)
+    } else {
+        let exif = match read_exif_permissive(file_path) {
+            Some(exif) => exif,
+            None => return Ok(None),
+        };
+        crate::t_embedded_jpeg::select(&mut Cursor::new(exif.buf()), &exif, thumbnail_size)
+    }
 }
 
-fn collect_embedded_jpeg_candidates(file_path: &str) -> Result<Vec<EmbeddedJpegCandidate>, String> {
-    let exif = match read_exif_permissive(file_path) {
-        Some(exif) => exif,
-        None => return Ok(Vec::new()),
-    };
-
-    let buf = exif.buf();
-    let mut candidates: Vec<EmbeddedJpegCandidate> = Vec::new();
-
-    // The parser caps IFD count at 8. Scan all possible IFDs for embedded JPEGs.
-    for ifd_index in 0u16..8u16 {
-        let ifd = In(ifd_index);
-        let offset = exif
-            .get_field(Tag::JPEGInterchangeFormat, ifd)
-            .and_then(|field| field.value.get_uint(0))
-            .map(|value| value as usize);
-        let len = exif
-            .get_field(Tag::JPEGInterchangeFormatLength, ifd)
-            .and_then(|field| field.value.get_uint(0))
-            .map(|value| value as usize);
-
-        let (offset, len) = match (offset, len) {
-            (Some(offset), Some(len)) if len > 4 => (offset, len),
-            _ => continue,
-        };
-
-        let end = offset.saturating_add(len);
-        if end > buf.len() {
-            continue;
-        }
-
-        let candidate = &buf[offset..end];
-        // Basic JPEG signature check to avoid selecting non-JPEG payloads.
-        if !(candidate.starts_with(&[0xFF, 0xD8])) {
-            continue;
-        }
-
-        let data = candidate.to_vec();
-        let (width, height, max_edge) = match image::load_from_memory(&data) {
-            Ok(image) => {
-                let (width, height) = image.dimensions();
-                (width, height, width.max(height))
-            }
-            Err(_) => continue,
-        };
-
-        if max_edge == 0 {
-            continue;
-        }
-
-        candidates.push(EmbeddedJpegCandidate {
-            data,
-            width,
-            height,
-            max_edge,
-        });
-    }
-
-    Ok(candidates)
-}
-
-fn select_embedded_jpeg_for_preview(file_path: &str) -> Result<Option<Vec<u8>>, String> {
-    let candidates = collect_embedded_jpeg_candidates(file_path)?;
-    let (raw_width, raw_height) = t_libraw::get_raw_dimensions(file_path)?;
-    let mut selected: Option<EmbeddedJpegCandidate> = None;
-
-    for candidate in candidates {
-        let width_delta = candidate.width.abs_diff(raw_width);
-        let height_delta = candidate.height.abs_diff(raw_height);
-        let is_fullsize = width_delta.saturating_mul(100) <= raw_width.max(1)
-            && height_delta.saturating_mul(100) <= raw_height.max(1);
-
-        if !is_fullsize {
-            continue;
-        }
-
-        match &selected {
-            Some(best) if candidate.max_edge <= best.max_edge => {}
-            _ => selected = Some(candidate),
-        }
-    }
-
-    Ok(selected.map(|item| item.data))
+fn select_embedded_jpeg_for_preview(
+    file_path: &str,
+) -> Result<Option<crate::t_embedded_jpeg::Preview>, String> {
+    select_embedded_jpeg(file_path, None)
 }
 
 fn select_embedded_jpeg_for_thumbnail(
     file_path: &str,
     thumbnail_size: u32,
-) -> Result<Option<Vec<u8>>, String> {
-    let candidates = collect_embedded_jpeg_candidates(file_path)?;
-    if candidates.is_empty() {
-        return Ok(None);
-    }
-
-    let mut best_not_smaller: Option<EmbeddedJpegCandidate> = None;
-    let mut best_smaller: Option<EmbeddedJpegCandidate> = None;
-
-    for candidate in candidates {
-        if candidate.max_edge >= thumbnail_size {
-            match &best_not_smaller {
-                Some(best) if candidate.max_edge >= best.max_edge => {}
-                _ => best_not_smaller = Some(candidate),
-            }
-        } else {
-            match &best_smaller {
-                Some(best) if candidate.max_edge <= best.max_edge => {}
-                _ => best_smaller = Some(candidate),
-            }
-        }
-    }
-
-    Ok(best_not_smaller.or(best_smaller).map(|item| item.data))
-}
-
-fn get_jpeg_orientation_from_bytes(data: &[u8]) -> i32 {
-    let exif = match read_exif_from_bytes_permissive(data) {
-        Some(exif) => exif,
-        None => return 1,
-    };
-
-    exif.get_field(Tag::Orientation, In::PRIMARY)
-        .and_then(|field| field.value.get_uint(0))
-        .map(|value| value as i32)
-        .unwrap_or(1)
+) -> Result<Option<crate::t_embedded_jpeg::Preview>, String> {
+    select_embedded_jpeg(file_path, Some(thumbnail_size))
 }
 
 pub fn get_raw_preview_image(
@@ -837,12 +741,14 @@ pub fn get_raw_preview_image(
     // Final fallback for unsupported RAW renderers or files without a usable
     // processed output. The selected source still controls the normal path.
     if let Ok(Some(preview)) = select_embedded_jpeg_for_preview(file_path) {
-        let image = image::load_from_memory(&preview)
-            .map_err(|e| format!("Failed to decode embedded RAW preview: {}", e))?;
-        let image = apply_orientation(image, get_jpeg_orientation_from_bytes(&preview));
-        let buf = crate::t_jpeg::encode_rgb8(&image.to_rgb8(), 85)
-            .map_err(|e| format!("Failed to encode embedded RAW preview: {}", e))?;
-        return Ok(Some(buf));
+        // A readable JPEG header does not guarantee a decodable payload.
+        // Preserve the remaining fallbacks if the embedded image is damaged.
+        if let Ok(image) = image::load_from_memory(&preview.data) {
+            let image = apply_orientation(image, preview.orientation);
+            let buf = crate::t_jpeg::encode_rgb8(&image.to_rgb8(), 85)
+                .map_err(|e| format!("Failed to encode embedded RAW preview: {}", e))?;
+            return Ok(Some(buf));
+        }
     }
 
     #[cfg(target_os = "macos")]
@@ -883,9 +789,7 @@ pub fn get_raw_dimensions(file_path: &str) -> Result<(u32, u32), String> {
     }
 
     if let Ok(Some(preview)) = select_embedded_jpeg_for_preview(file_path) {
-        if let Ok(image) = image::load_from_memory(&preview) {
-            return Ok(image.dimensions());
-        }
+        return Ok((preview.width, preview.height));
     }
 
     Err("Failed to resolve RAW dimensions".to_string())
@@ -907,14 +811,9 @@ pub fn get_raw_thumbnail(
 
     // Fallback: EXIF-based embedded JPEG extraction
     if let Ok(Some(preview)) = select_embedded_jpeg_for_thumbnail(file_path, thumbnail_size) {
-        let img = image::load_from_memory(&preview)
-            .map_err(|e| format!("Failed to decode RAW preview image: {}", e))?;
-        return resize_dynamic_image_to_jpeg(
-            img,
-            get_jpeg_orientation_from_bytes(&preview),
-            thumbnail_size,
-        )
-        .map(Some);
+        if let Ok(img) = image::load_from_memory(&preview.data) {
+            return resize_dynamic_image_to_jpeg(img, preview.orientation, thumbnail_size).map(Some);
+        }
     }
 
     #[cfg(target_os = "macos")]

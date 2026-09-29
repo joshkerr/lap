@@ -32,6 +32,10 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter, State};
 
+// Serialize a scoped metadata refresh with library switching. A refresh may
+// open several connections, all of which must resolve to the same library.
+static FILE_REFRESH_LIBRARY_LOCK: Mutex<()> = Mutex::new(());
+
 // cancellation token for indexing
 pub struct IndexCancellation(pub Arc<Mutex<HashMap<i64, bool>>>);
 pub struct ImportCancellation(pub Arc<Mutex<ImportState>>);
@@ -393,6 +397,7 @@ pub async fn switch_library(app_handle: tauri::AppHandle, id: String) -> Result<
     // create_db's returned error itself rather than re-reading the process-global flag afterwards
     // (which a concurrent switch could resolve against a different library).
     let corrupted = tauri::async_runtime::spawn_blocking(move || -> Result<bool, String> {
+        let _guard = FILE_REFRESH_LIBRARY_LOCK.lock().map_err(|e| e.to_string())?;
         t_config::switch_library(&id)?;
         t_utils::clear_album_accessibility();
         t_sqlite::clear_conn_pool();
@@ -478,7 +483,10 @@ pub fn get_all_albums(refresh_accessibility: bool) -> Result<Vec<Album>, String>
 /// Get the indexed folder records used by the album sidebar search.
 #[tauri::command]
 pub fn get_all_album_folders() -> Result<Vec<AFolder>, String> {
-    AFolder::get_all().map_err(|e| format!("Error while getting album folders: {}", e))
+    let albums = Album::get_all_albums()?;
+    Ok(AFolder::get_all()?.into_iter().filter(|folder| albums.iter()
+        .find(|album| album.id == Some(folder.album_id))
+        .is_some_and(|album| !album.excludes_path(std::path::Path::new(&folder.path)))).collect())
 }
 
 /// batch-generate thumbnails for a directory into an output folder
@@ -516,14 +524,15 @@ pub fn recount_album(album_id: i64) -> Result<Album, String> {
 }
 
 #[tauri::command]
-pub fn get_album_visible_counts(small_file_filter: i64) -> Result<HashMap<i64, i64>, String> {
-    Album::get_visible_counts(small_file_filter)
+pub fn get_album_visible_counts() -> Result<HashMap<i64, i64>, String> {
+    Album::get_visible_counts()
         .map_err(|e| format!("Error while getting album visible counts: {}", e))
 }
 
 /// add an album
 #[tauri::command]
-pub fn add_album(app_handle: tauri::AppHandle, folder_path: &str) -> Result<Album, String> {
+pub fn add_album(app_handle: tauri::AppHandle, folder_path: &str, name: String, description: String,
+    file_types: i64, small_image_filter: i64, excluded_folders: Vec<String>) -> Result<Album, String> {
     t_utils::authorize_directory_scope(&app_handle, folder_path).map_err(|e| {
         format!(
             "Error while authorizing album folder '{}': {}",
@@ -531,18 +540,47 @@ pub fn add_album(app_handle: tauri::AppHandle, folder_path: &str) -> Result<Albu
         )
     })?;
 
-    Album::add_album_to_db(folder_path)
-        .map_err(|e| format!("Error while adding an album to DB: {}", e))
+    let album = Album::add_album_to_db(folder_path)?;
+    let id = album.id.ok_or("New album has no id")?;
+    if let Err(error) = Album::edit(id, &name, &description, file_types, small_image_filter, &excluded_folders) {
+        let _ = Album::delete_from_db(id);
+        return Err(error);
+    }
+    Album::get_album_by_id(id)
 }
 
 /// edit an album
 #[tauri::command]
-pub fn edit_album(id: i64, name: &str, description: &str) -> Result<usize, String> {
-    let _ = Album::update_column(id, "name", &name)
-        .map_err(|e| format!("Error while editing album with id {}: {}", id, e));
+pub async fn edit_album(state: State<'_, IndexCancellation>, id: i64, name: String, description: String,
+    file_types: i64, small_image_filter: i64, excluded_folders: Vec<String>) -> Result<usize, String> {
+    // Block new scans/syncs, then finish cancellation before changing the scope
+    // used by the running scan's sweep.
+    let old = Album::get_album_by_id(id)?;
+    let scope_changed = old.file_types != file_types || old.excluded_folders != excluded_folders
+        || old.small_image_filter != small_image_filter;
+    let _scope_guard = scope_changed.then(|| t_utils::AlbumRemovalGuard::acquire(id));
+    if scope_changed {
+        state.0.lock().unwrap().insert(id, true);
+        t_utils::wait_for_album_scan_end(id).await?;
+    }
+    let lock = t_utils::album_sync_lock(id);
+    let _guard = lock.lock().map_err(|_| "Album sync lock poisoned".to_string())?;
+    Album::edit(id, &name, &description, file_types, small_image_filter, &excluded_folders)
+}
 
-    Album::update_column(id, "description", &description)
-        .map_err(|e| format!("Error while editing album with id {}: {}", id, e))
+#[tauri::command]
+pub async fn list_album_subfolders(path: String) -> Result<Vec<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut names = Vec::new();
+        for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            if entry.file_type().map_err(|e| e.to_string())?.is_dir() {
+                names.push(entry.file_name().to_string_lossy().to_string());
+            }
+        }
+        names.sort_by_key(|name| name.to_lowercase());
+        Ok(names)
+    }).await.map_err(|e| e.to_string())?
 }
 
 /// remove an album
@@ -723,10 +761,19 @@ pub fn fetch_folder(
 
 /// count all files in a folder (include all sub-folders)
 #[tauri::command]
-pub async fn count_folder(path: String) -> Result<(u64, u64, u64, u64, u64, u64, u64), String> {
-    tauri::async_runtime::spawn_blocking(move || t_utils::count_folder_files(&path))
+pub async fn count_folder(path: String, file_types: Option<i64>, excluded_folders: Option<Vec<String>>, small_image_filter: Option<i64>) -> Result<(u64, u64, u64, u64, u64, u64, u64), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if !t_utils::directory_accessible(&path) {
+            return Err("Folder is unavailable".to_string());
+        }
+        Ok(if file_types.is_none() && excluded_folders.is_none() && small_image_filter.is_none() {
+            t_utils::count_folder_files(&path)
+        } else {
+            t_utils::count_folder_files_filtered(&path, file_types.unwrap_or(7), &excluded_folders.unwrap_or_default(), small_image_filter.unwrap_or(0))
+        })
+    })
         .await
-        .map_err(|e| format!("Failed to count folder: {}", e))
+        .map_err(|e| format!("Failed to count folder: {}", e))?
 }
 
 /// create a new folder
@@ -1143,8 +1190,8 @@ pub async fn get_query_file_ids(params: QueryParams) -> Result<Vec<i64>, String>
 }
 
 #[tauri::command]
-pub fn get_library_visible_counts(small_file_filter: i64) -> Result<t_sqlite::LibraryVisibleCounts, String> {
-    AFile::get_library_visible_counts(small_file_filter)
+pub fn get_library_visible_counts() -> Result<t_sqlite::LibraryVisibleCounts, String> {
+    AFile::get_library_visible_counts()
         .map_err(|e| format!("Error while getting library visible counts: {}", e))
 }
 
@@ -1165,8 +1212,8 @@ pub fn list_collections() -> Result<Vec<ACollection>, String> {
 }
 
 #[tauri::command]
-pub fn get_collection_counts(small_file_filter: i64) -> Result<HashMap<i64, i64>, String> {
-    ACollection::get_counts(small_file_filter)
+pub fn get_collection_counts() -> Result<HashMap<i64, i64>, String> {
+    ACollection::get_counts()
         .map_err(|e| format!("Error while getting collection counts: {}", e))
 }
 
@@ -2745,6 +2792,31 @@ pub fn update_file_info(file_id: i64, file_path: &str) -> Result<Option<AFile>, 
         .map_err(|e| format!("Error while updating file info: {}", e))
 }
 
+/// Force a selected file refresh without accepting a stale frontend file path.
+#[tauri::command]
+pub async fn refresh_selected_file_info(library_id: String, file_id: i64) -> Result<Option<AFile>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let _guard = FILE_REFRESH_LIBRARY_LOCK.lock().map_err(|e| e.to_string())?;
+        if t_config::load_app_config()?.current_library_id != library_id {
+            return Err("Library changed".to_string());
+        }
+        let old = AFile::get_file_info(file_id)?.ok_or("File not found")?;
+        let path = old.file_path.as_deref().ok_or("File path missing")?;
+        let updated = AFile::update_file_info(file_id, path, chrono::Utc::now().timestamp_millis())?;
+        if let Some(ref file) = updated {
+            let content_changed = old.modified_at != file.modified_at || old.size != file.size;
+            if content_changed || old.width != file.width || old.height != file.height
+                || old.e_orientation != file.e_orientation {
+                AThumb::delete(file_id)?;
+            }
+            if content_changed {
+                AFile::update_column(file_id, "embeds", &Option::<Vec<u8>>::None)?;
+            }
+        }
+        AFile::get_file_info(file_id)
+    }).await.map_err(|e| format!("File refresh task failed: {e}"))?
+}
+
 /// add or refresh a file in db and return the indexed file info
 #[tauri::command]
 pub fn add_file_to_db(folder_id: i64, file_path: &str) -> Result<Option<AFile>, String> {
@@ -2886,8 +2958,8 @@ pub fn get_tag_group_name(id: i64) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub fn get_tag_groups(small_file_filter: i64) -> Result<Vec<crate::t_tag_groups::TagGroup>, String> {
-    crate::t_tag_groups::get_all(small_file_filter)
+pub fn get_tag_groups() -> Result<Vec<crate::t_tag_groups::TagGroup>, String> {
+    crate::t_tag_groups::get_all()
 }
 
 #[tauri::command]
@@ -2912,14 +2984,14 @@ pub fn move_tags_to_group(tag_ids: Vec<i64>, group_id: i64) -> Result<(), String
 
 /// get all tags
 #[tauri::command]
-pub fn get_all_tags(sort: i64, small_file_filter: i64) -> Result<Vec<ATag>, String> {
-    ATag::get_all(sort, small_file_filter)
+pub fn get_all_tags(sort: i64) -> Result<Vec<ATag>, String> {
+    ATag::get_all(sort)
         .map_err(|e| format!("Error while getting all tags: {}", e))
 }
 
 #[tauri::command]
-pub fn get_tag_counts(small_file_filter: i64) -> Result<HashMap<i64, i64>, String> {
-    ATag::get_counts(small_file_filter)
+pub fn get_tag_counts() -> Result<HashMap<i64, i64>, String> {
+    ATag::get_counts()
         .map_err(|e| format!("Error while getting tag counts: {}", e))
 }
 
@@ -2988,8 +3060,8 @@ pub fn apply_tags_to_files(
 
 /// get camera's taken dates
 #[tauri::command]
-pub fn get_taken_dates(sort: i64, small_file_filter: i64) -> Result<Vec<(String, i64)>, String> {
-    AFile::get_taken_dates(sort, small_file_filter)
+pub fn get_taken_dates(sort: i64) -> Result<Vec<(String, i64)>, String> {
+    AFile::get_taken_dates(sort)
         .map_err(|e| format!("Error while getting taken dates: {}", e))
 }
 
@@ -2997,22 +3069,22 @@ pub fn get_taken_dates(sort: i64, small_file_filter: i64) -> Result<Vec<(String,
 
 /// get a file's camera make and model info
 #[tauri::command]
-pub fn get_camera_info(sort: i64, small_file_filter: i64) -> Result<Vec<ACamera>, String> {
-    ACamera::get_from_db(sort, small_file_filter).map_err(|e| format!("Error while getting camera info: {}", e))
+pub fn get_camera_info(sort: i64) -> Result<Vec<ACamera>, String> {
+    ACamera::get_from_db(sort).map_err(|e| format!("Error while getting camera info: {}", e))
 }
 
 /// get a file's lens make and model info
 #[tauri::command]
-pub fn get_lens_info(sort: i64, small_file_filter: i64) -> Result<Vec<ALens>, String> {
-    ALens::get_from_db(sort, small_file_filter).map_err(|e| format!("Error while getting lens info: {}", e))
+pub fn get_lens_info(sort: i64) -> Result<Vec<ALens>, String> {
+    ALens::get_from_db(sort).map_err(|e| format!("Error while getting lens info: {}", e))
 }
 
 // location
 
 /// get a file's location info
 #[tauri::command]
-pub fn get_location_info(sort: i64, small_file_filter: i64) -> Result<Vec<ALocation>, String> {
-    ALocation::get_from_db(sort, small_file_filter).map_err(|e| format!("Error while getting location info: {}", e))
+pub fn get_location_info(sort: i64) -> Result<Vec<ALocation>, String> {
+    ALocation::get_from_db(sort).map_err(|e| format!("Error while getting location info: {}", e))
 }
 
 #[tauri::command]
@@ -3199,8 +3271,8 @@ pub fn index_faces(
 
 /// get face indexing stats
 #[tauri::command]
-pub fn get_face_stats(small_file_filter: i64) -> Result<t_face::FaceStats, String> {
-    let (total, processed, unprocessed, faces) = t_sqlite::Face::get_stats_full(small_file_filter)
+pub fn get_face_stats() -> Result<t_face::FaceStats, String> {
+    let (total, processed, unprocessed, faces) = t_sqlite::Face::get_stats_full()
         .map_err(|e| format!("Error while getting face stats: {}", e))?;
 
     Ok(t_face::FaceStats {

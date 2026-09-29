@@ -21,6 +21,8 @@ import ja from '@/locales/ja.json'
 import ko from '@/locales/ko.json'
 import ru from '@/locales/ru.json'
 import pt from '@/locales/pt.json'
+import pl from '@/locales/pl.json'
+import nl from '@/locales/nl.json'
 
 // Create the app instance
 const app = createApp(App)
@@ -63,7 +65,9 @@ const i18n = createI18n({
     ja,
     ko,
     ru,
-    pt
+    pt,
+    pl,
+    nl
   },
 })
 
@@ -76,7 +80,6 @@ app.use(i18n)
 
 // Mount the app
 app.mount('#app')
-console.log('App mounted', app)
 
 // Listen for events
 if (isMainWindow) {
@@ -158,9 +161,6 @@ if (isMainWindow) {
   listen('settings-gridThumbnailBadge-changed', (event) => {
     config.setGridThumbnailBadge(event.payload)
   })
-  listen('settings-dblClickAction-changed', (event) => {
-    config.setDblClickAction(event.payload)
-  })
   listen('settings-filmStripViewPreviewPosition-changed', (event) => {
     config.setFilmStripViewPreviewPosition(event.payload)
   })
@@ -178,9 +178,6 @@ if (isMainWindow) {
   })
   listen('settings-groupRawJpegPairs-changed', (event) => {
     config.settings.groupRawJpegPairs = event.payload
-  })
-  listen('settings-smallFileFilter-changed', (event) => {
-    config.setSmallFileFilter(event.payload)
   })
   listen('settings-navigatorViewMode-changed', (event) => {
     config.setNavigatorViewMode(event.payload)

@@ -9,7 +9,7 @@
   </p>
 </div>
 
-[English](../README.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | Español | [Português](README.pt.md) | [Русский](README.ru.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
+[English](../README.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | Español | [Português](README.pt.md) | [Polski](README.pl.md) | [Nederlands](README.nl.md) | [Русский](README.ru.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md)
 
 Lap es un gestor de fotos de código abierto y local-first, diseñado para explorar álbumes familiares, encontrar fotos antiguas rápidamente y gestionar grandes bibliotecas multimedia personales sin conexión.
 Es una alternativa centrada en la privacidad frente a los servicios de fotos en la nube: sin cargas forzadas, con búsqueda local mediante IA, un flujo de trabajo basado en carpetas y de uso gratuito.
@@ -174,6 +174,8 @@ cargo install tauri-cli --version "^2.0.0" --locked
 cd src-vite && pnpm install && cd ..
 cargo tauri dev
 ```
+
+Los paquetes de distribución pueden enlazar con el libheif del sistema (1.17 o posterior) en lugar del libheif y libde265 incluidos. Establece `LAP_SYSTEM_LIBHEIF=1` para la compilación. Entonces no se necesitan los submódulos `third_party/libheif` y `third_party/libde265`. La decodificación HEVC depende de los complementos de códec del libheif del sistema.
 
 ## Formatos compatibles
 

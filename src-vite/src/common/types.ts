@@ -20,6 +20,9 @@ export interface Folder {
  * Represents an album with its folder hierarchy
  */
 export interface Album {
+    file_types: number;
+    small_image_filter: number;
+    excluded_folders: string[];
     id: number;
     name: string;
     path: string;

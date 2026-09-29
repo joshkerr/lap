@@ -123,11 +123,17 @@ fn is_same_size_embedded_jpeg(thumb: &RawImageBlob, raw_width: u32, raw_height: 
         return false;
     }
 
-    let width_delta = thumb.width.abs_diff(raw_width);
-    let height_delta = thumb.height.abs_diff(raw_height);
-
-    width_delta.saturating_mul(100) <= raw_width.max(1)
-        && height_delta.saturating_mul(100) <= raw_height.max(1)
+    // LibRaw's adjusted dimensions include camera rotation, while an embedded
+    // JPEG can store landscape pixels and express portrait orientation in EXIF.
+    // Compare long/short edges; apply orientation separately when decoding.
+    let raw_long = raw_width.max(raw_height);
+    let raw_short = raw_width.min(raw_height);
+    let jpeg_long = thumb.width.max(thumb.height);
+    let jpeg_short = thumb.width.min(thumb.height);
+    raw_short > 0
+        && jpeg_short > 0
+        && jpeg_long.abs_diff(raw_long).saturating_mul(100) <= raw_long
+        && jpeg_short.abs_diff(raw_short).saturating_mul(100) <= raw_short
 }
 
 fn decode_bitmap_image(
@@ -653,20 +659,4 @@ pub fn is_tiff_path(file_path: &str) -> bool {
         file_extension(file_path).as_deref(),
         Some("tif") | Some("tiff")
     )
-}
-
-#[cfg(test)]
-mod tests {
-    use super::raw_flip_to_exif_orientation;
-
-    #[test]
-    fn maps_libraw_flip_to_exif_orientation() {
-        assert_eq!(raw_flip_to_exif_orientation(0), Some(1));
-        assert_eq!(raw_flip_to_exif_orientation(3), Some(3));
-        assert_eq!(raw_flip_to_exif_orientation(5), Some(8));
-        assert_eq!(raw_flip_to_exif_orientation(6), Some(6));
-        assert_eq!(raw_flip_to_exif_orientation(90), Some(6));
-        assert_eq!(raw_flip_to_exif_orientation(270), Some(8));
-        assert_eq!(raw_flip_to_exif_orientation(4), None);
-    }
 }

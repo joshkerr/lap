@@ -72,7 +72,7 @@
     },
     "edit": {
       "title_add": "New album",
-      "title": "Album Info",
+      "title": "Edit album",
       "folder": "Folder",
       "select_folder": "Select a folder",
       "name": "Name",
@@ -92,10 +92,32 @@
       "scanning_files": "{current}/{total} files ({size})",
       "files_count": "{count} files ({size})",
       "files_count_without_size": "{count} files",
+      "section_scan_preview": "Scan preview",
+      "excluded_files": "Excluded",
+      "preview_updating": "Updating…",
+      "preview_unavailable": "Scan preview unavailable",
       "files_counting": "Counting files...",
       "created_at": "Created at",
       "modified_at": "Modified at",
-      "last_scan_time": "Last scanned"
+      "last_scan_time": "Last scanned",
+      "tab_general": "General",
+      "file_types": "Exclude file types",
+      "photos": "Photos",
+      "raw": "RAW",
+      "file_types_required": "Keep at least one file type included.",
+      "pixel_filter": "Exclude small images",
+      "filter_off": "Off",
+      "pixel_hint": "Exclude images with both width and height below this value.",
+      "excluded_folders": "Exclude folders",
+      "excluded_hint": "Select first-level subfolders to exclude, including all their contents.",
+      "search_folders": "Search folders",
+      "loading_folders": "Loading folders…",
+      "folders_unavailable": "Folders are unavailable. Saved exclusions are retained.",
+      "no_subfolders": "No first-level subfolders.",
+      "save_update": "Save & Update",
+      "save_failed": "Could not save album settings. Please try again.",
+      "file_types_hint": "Selected file types are excluded from this album.",
+      "tab_exclusions": "Exclusions"
     },
     "no_albums": {
       "title": "No albums added yet",
@@ -639,7 +661,7 @@
     },
     "album": {
       "add": "New album",
-      "edit": "Album Info...",
+      "edit": "Edit album...",
       "scan": "Scan album",
       "reorder": "Reorder",
       "pause_scan": "Pause scanning",
@@ -927,6 +949,15 @@
     },
     "select_file": {
       "error": "Failed to select file."
+    },
+    "file_refresh": {
+      "status": "Refresh status",
+      "running": "Refreshing…",
+      "cancelling": "Cancelling…",
+      "cancelled": "Cancelled",
+      "complete": "Complete",
+      "succeeded": "Updated: {count}",
+      "failed": "Failed: {count}"
     },
     "image_editor": {
       "title": "Edit",
@@ -1231,9 +1262,6 @@
       "section_file_display": "File display",
       "group_raw_jpeg_pairs": "Group RAW Pairs",
       "group_raw_jpeg_pairs_hint": "Show matching RAW and JPEG/HEIC files as a single item",
-      "small_file_filter": "Small file filter",
-      "small_file_filter_hint": "Hide files when both width and height are below the selected size",
-      "small_file_filter_options": ["Off", "160 px", "320 px", "640 px"],
       "section_sorting": "Sorting",
       "folder_sort": "Folders",
       "folder_sort_hint": "Sort order for folders shown under albums",
@@ -1265,9 +1293,6 @@
     "grid": {
       "title": "Layout",
       "section_grid": "Grid",
-      "dbl_click_thumbnail": "Double-click thumbnail",
-      "dbl_click_quick_preview": "Quick preview",
-      "dbl_click_new_window": "Open in new window",
       "style": "Style",
       "style_options": [
         "Card view",

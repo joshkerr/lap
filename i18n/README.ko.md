@@ -9,7 +9,7 @@
   </p>
 </div>
 
-[English](../README.md) [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md) | [Português](README.pt.md) | [Русский](README.ru.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | 한국어 |
+[English](../README.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Español](README.es.md) | [Português](README.pt.md) | [Polski](README.pl.md) | [Nederlands](README.nl.md) | [Русский](README.ru.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | 한국어
 
 Lap은 오픈 소스 기반의 '로컬 우선(local-first)' 사진 관리 도구입니다. 가족 앨범을 둘러보고, 오래된 사진을 빠르게 찾으며, 대규모 개인 미디어 라이브러리를 오프라인에서 직접 관리할 수 있도록 설계되었습니다.
 클라우드 사진 서비스의 개인정보 보호 대안으로서, 강제 업로드 없음, 로컬 AI 검색, 폴더 우선 워크플로우를 제공하며 완전히 무료로 사용할 수 있습니다.
@@ -174,6 +174,8 @@ cargo install tauri-cli --version "^2.0.0" --locked
 cd src-vite && pnpm install && cd ..
 cargo tauri dev
 ```
+
+배포 패키지는 번들된 libheif와 libde265 대신 시스템 libheif(1.17 이상)에 링크할 수 있습니다. 빌드 시 `LAP_SYSTEM_LIBHEIF=1`을(를) 설정하세요. 그러면 `third_party/libheif` 및 `third_party/libde265` 하위 모듈이 필요하지 않습니다. HEVC 디코딩은 시스템 libheif의 코덱 플러그인에 따라 달라집니다.
 
 ## 지원 포맷
 

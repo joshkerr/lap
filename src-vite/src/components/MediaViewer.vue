@@ -1,6 +1,7 @@
 <template>
+  <Teleport to="body" :disabled="!previewFullScreen">
   <div 
-    :class="['w-full relative flex flex-col items-center justify-center', toolbarOnly ? '' : 'h-full group']"
+    :class="['w-full flex flex-col items-center justify-center', previewFullScreen ? 'fixed inset-0 z-[200]' : 'relative', isFullScreen ? 'bg-base-200' : '', toolbarOnly ? '' : 'h-full group']"
     :style="toolbarOnly ? undefined : viewBackgroundStyle"
     @mousemove="handleMouseMove"
     @mouseleave="handleMouseLeave"
@@ -195,11 +196,10 @@
         />
         <IconSeparator v-if="mode !== 2" class="t-icon-size-sm text-base-content/30" />
         <TButton
-          v-if="mode === 2"
           :icon="!isFullScreen ? IconFullScreen : IconRestoreScreen"
           :tooltip="!isFullScreen ? $t('image_viewer.toolbar.fullscreen') : $t('image_viewer.toolbar.exit_fullscreen')"
           :disabled="!canInteract"
-          @click="$emit('toggle-full-screen')"
+          @click="toggleFullScreen"
         />
         <TButton v-if="mode !== 2 && !isFullScreen"
           :icon="config.mediaViewer.isPinned ? IconPin : IconUnPin"
@@ -208,7 +208,7 @@
           @click="toggleToolbarPin"
         />
         <TButton
-          v-if="mode === 0 && config.mediaViewer.isPinned"
+          v-if="isFullScreen || (mode === 0 && config.mediaViewer.isPinned)"
           :icon="IconClose"
           :tooltip="$t('image_viewer.toolbar.close')"
           :disabled="!canInteract"
@@ -292,7 +292,7 @@
 
       <!-- Previous Button (Overlay, media-area anchored) -->
       <button
-        v-if="!isSlideShow && showOverlayNav"
+        v-if="!isSlideShow && (showOverlayNav || previewFullScreen)"
         class="absolute left-2 top-1/2 -translate-y-1/2 z-70 p-2 rounded-full bg-base-100/30 backdrop-blur-md transition-opacity duration-200"
         :class="[
           isHoverLeft ? (hasPrevious ? 'opacity-100 pointer-events-auto hover:text-base-content hover:bg-base-100/80 cursor-pointer' : 'opacity-30 cursor-default') : 'opacity-0 pointer-events-none'
@@ -306,7 +306,7 @@
 
       <!-- Next Button (Overlay, media-area anchored) -->
       <button
-        v-if="!isSlideShow && showOverlayNav"
+        v-if="!isSlideShow && (showOverlayNav || previewFullScreen)"
         class="absolute right-2 top-1/2 -translate-y-1/2 z-70 p-2 rounded-full bg-base-100/30 backdrop-blur-md transition-opacity duration-200"
         :class="[
           isHoverRight ? (hasNext ? 'opacity-100 pointer-events-auto hover:text-base-content hover:bg-base-100/80 cursor-pointer' : 'opacity-30 cursor-default') : 'opacity-0 pointer-events-none'
@@ -428,12 +428,14 @@
       <template #trigger><span /></template>
     </ContextMenu>
   </div>
+  </Teleport>
 </template>
 
 <script setup lang="ts">
 import { defineAsyncComponent, ref, computed, watch, onMounted, onBeforeUnmount, type Component, type CSSProperties } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { runPreviewWindowOperation, recoverPreviewWindowFocus } from '@/common/previewWindow';
 import { config, libConfig } from '@/common/config';
 import { useToast } from '@/common/toast';
 import { isWin, isMac, isLinux, getSlideShowInterval } from '@/common/utils';
@@ -690,6 +692,104 @@ const filenameMaxWidth = computed(() => {
 const showExtraIcons = computed(() => containerWidth.value > 600);
 // Window control state (Windows + ImageViewer mode)
 const showDesktopWindowControls = isWin || isLinux;
+// Preview owns its fullscreen session; the standalone viewer delegates to its window.
+const previewFullScreen = ref(false);
+const isFullScreen = computed(() => props.isFullScreen || previewFullScreen.value);
+let fullscreenBusy = false;
+let previewDisposed = false;
+let windowWasFullScreen = false;
+let windowWasMaximized = false;
+let unlistenPreviewResize: (() => void) | undefined;
+function stopPreviewResizeListener() {
+  unlistenPreviewResize?.();
+  unlistenPreviewResize = undefined;
+}
+
+async function restorePreviewWindow() {
+  const appWindow = getCurrentWindow();
+  if (!windowWasFullScreen) {
+    if (await appWindow.isFullscreen()) await appWindow.setFullscreen(false);
+    if (isWin && windowWasMaximized) {
+      await new Promise(resolve => setTimeout(resolve, 80));
+      await appWindow.maximize();
+    }
+  }
+  await recoverPreviewWindowFocus();
+}
+
+async function exitPreviewFullScreen() {
+  return runPreviewWindowOperation(async (cancelFocusRecovery) => {
+    if (!previewFullScreen.value) return;
+    cancelFocusRecovery();
+    fullscreenBusy = true;
+    try {
+      await restorePreviewWindow();
+      previewFullScreen.value = false;
+      // Closing a preview restores the window without forgetting its viewing mode.
+      if (!previewDisposed) config.mediaViewer.isFullScreen = false;
+      stopPreviewResizeListener();
+    } catch (error) {
+      console.error('Failed to exit preview fullscreen', error);
+    } finally {
+      fullscreenBusy = false;
+    }
+  });
+}
+
+async function toggleFullScreen() {
+  if (props.mode === 2) {
+    emit('toggle-full-screen');
+    return;
+  }
+  if (fullscreenBusy) return;
+  if (previewFullScreen.value) return exitPreviewFullScreen();
+  fullscreenBusy = true;
+  return runPreviewWindowOperation(async (cancelFocusRecovery) => {
+    if (previewDisposed) { fullscreenBusy = false; return; }
+    cancelFocusRecovery();
+    stopPreviewResizeListener();
+    const appWindow = getCurrentWindow();
+    let capturedWindowState = false;
+    try {
+      windowWasFullScreen = await appWindow.isFullscreen();
+      windowWasMaximized = await appWindow.isMaximized();
+      capturedWindowState = true;
+      if (!windowWasFullScreen) {
+        if (isWin && windowWasMaximized) {
+          await appWindow.unmaximize();
+          await new Promise(resolve => setTimeout(resolve, 80));
+        }
+        await appWindow.setFullscreen(true);
+      }
+      if (previewDisposed) {
+        await restorePreviewWindow();
+        return;
+      }
+      previewFullScreen.value = true;
+      unlistenPreviewResize = await appWindow.onResized(async () => {
+        if (!fullscreenBusy && previewFullScreen.value && !(await appWindow.isFullscreen())) {
+          void exitPreviewFullScreen();
+        }
+      });
+      if (previewDisposed) {
+        unlistenPreviewResize?.();
+        await restorePreviewWindow();
+      } else {
+        config.mediaViewer.isFullScreen = true;
+      }
+    } catch (error) {
+      console.error('Failed to enter preview fullscreen', error);
+      unlistenPreviewResize?.();
+      if (capturedWindowState) {
+        await restorePreviewWindow().catch(error => console.error('Failed to restore preview window', error));
+      }
+      previewFullScreen.value = false;
+    } finally {
+      fullscreenBusy = false;
+    }
+  });
+}
+
 const desktopAppWindow = showDesktopWindowControls ? getCurrentWindow() : null;
 const isMaximized = ref(false);
 
@@ -724,7 +824,10 @@ const viewBackgroundSwatches: CSSProperties[] = [
   ...viewBackgroundColors.slice(1).map(backgroundColor => ({ backgroundColor })),
 ];
 const viewBackgroundStyle = computed(() => {
-  return { backgroundColor: viewBackgroundColors[Number(config.settings.viewBackground ?? 0)] ?? viewBackgroundColors[0] };
+  const backgroundColor = viewBackgroundColors[Number(config.settings.viewBackground ?? 0)] ?? viewBackgroundColors[0];
+  return isFullScreen.value && backgroundColor === 'transparent'
+    ? undefined
+    : { backgroundColor };
 });
 const viewBackgroundMenuItems = computed(() => {
   const labels = localeMsg.value.settings.image_view.view_background_options || [];
@@ -910,7 +1013,7 @@ const quickViewStatusBadges = computed<StatusBadge[]>(() => {
 });
 
 const showStatusBadges = computed(() => {
-  return props.mode === 0 || props.mode === 2;
+  return !isFullScreen.value && (props.mode === 0 || props.mode === 2);
 });
 
 const showWindowControlsBar = computed(() => {
@@ -935,9 +1038,17 @@ onMounted(() => {
   if (buttonsRef.value) {
     resizeObserver.observe(buttonsRef.value);
   }
+  // Restore on opening Quick Preview. Merely mounting the embedded filmstrip
+  // pane (including at app startup) must not take over the main window.
+  if (props.mode === 0 && config.mediaViewer.isFullScreen) {
+    void toggleFullScreen();
+  }
 });
 
 onBeforeUnmount(() => {
+  previewDisposed = true;
+  stopPreviewResizeListener();
+  void exitPreviewFullScreen();
   if (resizeObserver) {
     resizeObserver.disconnect();
   }
@@ -1016,7 +1127,7 @@ function cycleViewBackground() {
 const computedToolbarClass = computed(() => {
   const commonClasses = 'absolute z-80 h-10 flex flex-row items-center justify-center select-none';
 
-  if (props.isFullScreen && props.mode === 2) {
+  if (isFullScreen.value) {
     const floatingClasses = 'left-1/2 top-4 -translate-x-1/2 px-2 rounded-box bg-base-100/30 hover:bg-base-100/70 transition-[opacity,transform] duration-300 ease-in-out';
     return `${commonClasses} ${floatingClasses} ${(props.forceToolbarVisible || isHoverTop.value || hasOpenMenu.value) ? 'opacity-100' : 'opacity-0'}`;
   }
@@ -1193,6 +1304,8 @@ const handleMessageFromImageViewer = (payload: { message: string }) => {
 };
 
 defineExpose({
+  isFullScreen,
+  exitPreviewFullScreen,
   zoomIn,
   zoomOut,
   zoomActual,

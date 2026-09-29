@@ -60,6 +60,7 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { fileInfoRevision } from '@/common/fileInfoRefresh';
 import { config, libConfig } from '@/common/config';
 import { getLocationInfo } from '@/common/api';
 import { SIDEBAR } from '@/common/constants';
@@ -111,8 +112,13 @@ onMounted(async () => {
   }
 });
 
+// Keep the current filter even if its last file moves out of this category.
+watch(fileInfoRevision, async () => {
+  if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.LOCATION) await getLocations(true);
+});
+
 // Only refresh the active view. Inactive panel data is refreshed on re-entry.
-watch(() => [config.settings.categorySort, config.settings.smallFileFilter], async () => {
+watch(() => [config.settings.categorySort], async () => {
   if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.LOCATION) await getLocations();
 });
 
@@ -163,7 +169,7 @@ function clickLocationName(location: any, name: string) {
 }
 
 /// get locations from db
-async function getLocations() {
+async function getLocations(preserveFilter = false) {
   const requestVersion = ++locationRequestVersion;
   const libraryId = libConfig._libraryId;
   isLoadingLocations.value = true;
@@ -175,7 +181,7 @@ async function getLocations() {
         ...location,
         is_expanded: false,
       }));
-      restoreLocationSelection();
+      if (!preserveFilter) restoreLocationSelection();
     }
     return true;
   } finally {

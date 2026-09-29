@@ -373,10 +373,6 @@ pub struct LibraryState {
     #[serde(alias = "dest_folder")]
     pub dest_folder: DestFolderState,
     pub index: IndexState,
-    /// Small-file filter value the lazily computed sidebar counts were produced
-    /// under. Counts are invalid whenever this differs from the current setting.
-    #[serde(default)]
-    pub counts_filter: i64,
 }
 
 // ============================================================================

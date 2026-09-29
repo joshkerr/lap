@@ -153,6 +153,11 @@ fn get_migrations() -> Vec<Migration> {
             description: "Add tag groups and persistent ordering",
             sql: "",
         },
+        Migration {
+            version: 18,
+            description: "Album scan scope and pixel filters",
+            sql: "",
+        },
     ]
 }
 
@@ -470,6 +475,19 @@ pub fn check_and_migrate(conn: &Connection) -> Result<(), String> {
                 }
             } else if migration.version == 17 {
                 migrate_tag_groups(conn)?;
+            } else if migration.version == 18 {
+                let tx = conn.unchecked_transaction().map_err(|e| e.to_string())?;
+                for (column, definition) in [
+                    ("file_types", "INTEGER NOT NULL DEFAULT 7"),
+                    ("small_image_filter", "INTEGER NOT NULL DEFAULT 0"),
+                    ("excluded_folders", "TEXT NOT NULL DEFAULT '[]'"),
+                ] {
+                    if !table_has_column(&tx, "albums", column)? {
+                        tx.execute(&format!("ALTER TABLE albums ADD COLUMN {column} {definition}"), [])
+                            .map_err(|e| e.to_string())?;
+                    }
+                }
+                tx.commit().map_err(|e| e.to_string())?;
             } else if !migration.sql.trim().is_empty() {
                 conn.execute_batch(migration.sql)
                     .map_err(|e| format!("Migration {} failed: {}", migration.version, e))?;
@@ -525,4 +543,24 @@ pub(crate) fn migrate_tag_groups(conn: &Connection) -> Result<(), String> {
         WHEN NEW.group_id IS NULL BEGIN SELECT RAISE(ABORT, 'Tag group is required'); END;")
         .map_err(|e| e.to_string())?;
     tx.commit().map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod album_filter_migration_tests {
+    use super::*;
+
+    #[test]
+    fn album_filter_migration_is_restartable_and_defaults_to_off() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch("CREATE TABLE albums(id INTEGER PRIMARY KEY); INSERT INTO albums VALUES(1); PRAGMA user_version=17;").unwrap();
+        check_and_migrate(&conn).unwrap();
+        let settings: (i64, Option<i64>, String) = conn.query_row(
+            "SELECT file_types,small_image_filter,excluded_folders FROM albums", [],
+            |row| Ok((row.get(0)?,row.get(1)?,row.get(2)?))).unwrap();
+        assert_eq!(settings, (7,Some(0),"[]".into()));
+        // Simulate migration completing before the version was persisted.
+        conn.execute_batch("PRAGMA user_version=17;").unwrap();
+        check_and_migrate(&conn).unwrap();
+        assert_eq!(conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)).unwrap(),18);
+    }
 }

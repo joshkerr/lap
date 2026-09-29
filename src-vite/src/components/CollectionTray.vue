@@ -207,9 +207,6 @@ const filteredCollections = computed(() => {
 watch(() => collections.value.length, (count) => {
   if (count <= 10) searchQuery.value = '';
 });
-watch(() => config.settings.smallFileFilter, () => {
-  if (libConfig.activePane === 'collection') void loadCollections();
-});
 watch(() => libConfig.activePane, () => {
   if (libConfig.activePane === 'collection') void loadCollections();
 });
@@ -273,16 +270,14 @@ onBeforeUnmount(() => {
 async function loadCollections(preferredId?: number) {
   const request = ++collectionCountRequest;
   const libraryId = libConfig._libraryId;
-  const smallFileFilter = Number(config.settings.smallFileFilter || 0);
   const [result, counts] = await Promise.all([
     listCollections(),
-    getCollectionCounts(smallFileFilter),
+    getCollectionCounts(),
   ]);
   if (
     !isCollectionTrayMounted
     || request !== collectionCountRequest
     || libraryId !== libConfig._libraryId
-    || smallFileFilter !== Number(config.settings.smallFileFilter || 0)
   ) return;
   const countMap = counts || {};
   libConfig.collection.counts = countMap;

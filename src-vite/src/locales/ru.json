@@ -72,7 +72,7 @@
     },
     "edit": {
       "title_add": "Новый альбом",
-      "title": "Об альбоме",
+      "title": "Редактировать альбом",
       "folder": "Папка",
       "select_folder": "Выберите папку",
       "name": "Имя",
@@ -92,10 +92,32 @@
       "scanning_files": "{current}/{total} файлов ({size})",
       "files_count": "Файлов: {count} ({size})",
       "files_count_without_size": "Файлов: {count}",
+      "section_scan_preview": "Предпросмотр сканирования",
+      "excluded_files": "Исключено",
+      "preview_updating": "Обновление…",
+      "preview_unavailable": "Предпросмотр сканирования недоступен",
       "files_counting": "Подсчёт файлов...",
       "created_at": "Создано",
       "modified_at": "Изменено",
-      "last_scan_time": "Последнее сканирование"
+      "last_scan_time": "Последнее сканирование",
+      "tab_general": "Общие",
+      "file_types": "Исключать типы файлов",
+      "photos": "Фото",
+      "raw": "RAW",
+      "file_types_required": "Оставьте хотя бы один тип файлов включённым.",
+      "pixel_filter": "Исключать маленькие изображения",
+      "filter_off": "Выкл.",
+      "pixel_hint": "Исключать изображения, у которых и ширина, и высота меньше этого значения.",
+      "excluded_folders": "Исключать папки",
+      "excluded_hint": "Выберите подпапки первого уровня, которые нужно исключить вместе со всем их содержимым.",
+      "search_folders": "Поиск папок",
+      "loading_folders": "Загрузка папок…",
+      "folders_unavailable": "Папки недоступны. Сохранённые исключения остаются в силе.",
+      "no_subfolders": "Нет подпапок первого уровня.",
+      "save_update": "Сохранить и обновить",
+      "save_failed": "Не удалось сохранить настройки альбома. Попробуйте ещё раз.",
+      "file_types_hint": "Выбранные типы файлов исключаются из этого альбома.",
+      "tab_exclusions": "Исключения"
     },
     "no_albums": {
       "title": "Нет альбомов",
@@ -639,7 +661,7 @@
     },
     "album": {
       "add": "Новый альбом",
-      "edit": "Об альбоме...",
+      "edit": "Редактировать альбом...",
       "scan": "Сканировать",
       "reorder": "Изменить порядок",
       "pause_scan": "Приостановить сканирование",
@@ -927,6 +949,15 @@
     },
     "select_file": {
       "error": "Ошибка выбора файла."
+    },
+    "file_refresh": {
+      "status": "Состояние обновления",
+      "running": "Обновление…",
+      "cancelling": "Отмена…",
+      "cancelled": "Отменено",
+      "complete": "Завершено",
+      "succeeded": "Обновлено: {count}",
+      "failed": "Ошибок: {count}"
     },
     "image_editor": {
       "title": "Редактировать",
@@ -1231,9 +1262,6 @@
       "section_file_display": "Отображение файлов",
       "group_raw_jpeg_pairs": "Группировать RAW-пары",
       "group_raw_jpeg_pairs_hint": "Показывать одноимённые файлы RAW и JPEG/HEIC как один элемент",
-      "small_file_filter": "Фильтр маленьких файлов",
-      "small_file_filter_hint": "Скрывать файлы, если ширина и высота меньше выбранного значения",
-      "small_file_filter_options": ["Выключено", "160 px", "320 px", "640 px"],
       "section_sorting": "Сортировка",
       "folder_sort": "Папки",
       "folder_sort_hint": "Сортировка папок, отображаемых внутри альбомов",
@@ -1265,9 +1293,6 @@
     "grid": {
       "title": "Компоновка",
       "section_grid": "Сетка",
-      "dbl_click_thumbnail": "Двойной щелчок по миниатюре",
-      "dbl_click_quick_preview": "Быстрый просмотр",
-      "dbl_click_new_window": "Открыть в новом окне",
       "style": "Стиль",
       "style_options": [
         "Карточки",

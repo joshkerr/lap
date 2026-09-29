@@ -71,6 +71,7 @@
 
 import { ref, onMounted, onUnmounted, computed, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { fileInfoRevision } from '@/common/fileInfoRefresh';
 import { config, libConfig } from '@/common/config';
 import { getCameraInfo, getLensInfo } from '@/common/api';
 import { SIDEBAR } from '@/common/constants';
@@ -125,8 +126,13 @@ onMounted(async () => {
   expandSelectedItem(lenses.value, (libConfig.camera as any).lensMake, (libConfig.camera as any).lensModel);
 });
 
+// Keep the current filter even if its last file moves out of this category.
+watch(fileInfoRevision, async () => {
+  if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.CAMERA) await loadCameraInfo(true);
+});
+
 // Only refresh the active view. Inactive panel data is refreshed on re-entry.
-watch(() => [config.settings.categorySort, config.settings.smallFileFilter], async () => {
+watch(() => [config.settings.categorySort], async () => {
   if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.CAMERA) await loadCameraInfo();
 });
 
@@ -134,7 +140,7 @@ watch(() => [config.main.sidebarIndex, libConfig.activePane], async () => {
   if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.CAMERA) await loadCameraInfo();
 });
 
-async function loadCameraInfo() {
+async function loadCameraInfo(preserveFilter = false) {
   const requestVersion = ++cameraRequestVersion;
   const libraryId = libConfig._libraryId;
   isLoadingCameraInfo.value = true;
@@ -153,7 +159,7 @@ async function loadCameraInfo() {
       lenses.value = fetchedLenses.map((lens: any) => ({ ...lens, is_expanded: false }));
       restoreExpandedItem(lenses.value, (libConfig.camera as any).lensMake, (libConfig.camera as any).lensModel);
     }
-    validateSelections();
+    if (!preserveFilter) validateSelections();
   } finally {
     if (isCameraMounted && requestVersion === cameraRequestVersion) {
       isLoadingCameraInfo.value = false;

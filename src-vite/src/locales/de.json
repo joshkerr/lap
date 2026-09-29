@@ -72,7 +72,7 @@
     },
     "edit": {
       "title_add": "Neues Album",
-      "title": "Albuminfo",
+      "title": "Album bearbeiten",
       "folder": "Ordner",
       "select_folder": "Ordner wählen",
       "name": "Name",
@@ -92,10 +92,32 @@
       "scanning_files": "{current}/{total} Dateien ({size})",
       "files_count": "{count} Dateien ({size})",
       "files_count_without_size": "{count} Dateien",
+      "section_scan_preview": "Scanvorschau",
+      "excluded_files": "Ausgeschlossen",
+      "preview_updating": "Wird aktualisiert…",
+      "preview_unavailable": "Scanvorschau nicht verfügbar",
       "files_counting": "Zähle Dateien...",
       "created_at": "Erstellt am",
       "modified_at": "Geändert am",
-      "last_scan_time": "Zuletzt gescannt"
+      "last_scan_time": "Zuletzt gescannt",
+      "tab_general": "Allgemein",
+      "file_types": "Dateitypen ausschließen",
+      "photos": "Fotos",
+      "raw": "RAW",
+      "file_types_required": "Mindestens einen Dateityp eingeschlossen lassen.",
+      "pixel_filter": "Kleine Bilder ausschließen",
+      "filter_off": "Aus",
+      "pixel_hint": "Bilder ausschließen, deren Breite und Höhe beide unter diesem Wert liegen.",
+      "excluded_folders": "Ordner ausschließen",
+      "excluded_hint": "Unterordner direkt im Stammordner auswählen, die mit ihrem gesamten Inhalt ausgeschlossen werden sollen.",
+      "search_folders": "Ordner suchen",
+      "loading_folders": "Ordner werden geladen…",
+      "folders_unavailable": "Ordner sind nicht verfügbar. Gespeicherte Ausschlüsse bleiben erhalten.",
+      "no_subfolders": "Keine direkten Unterordner.",
+      "save_update": "Speichern und aktualisieren",
+      "save_failed": "Albumeinstellungen konnten nicht gespeichert werden. Bitte erneut versuchen.",
+      "file_types_hint": "Ausgewählte Dateitypen werden aus diesem Album ausgeschlossen.",
+      "tab_exclusions": "Ausschlüsse"
     },
     "no_albums": {
       "title": "Keine Alben",
@@ -639,7 +661,7 @@
     },
     "album": {
       "add": "Neues Album",
-      "edit": "Albuminfo...",
+      "edit": "Album bearbeiten...",
       "scan": "Album scannen",
       "reorder": "Neu anordnen",
       "pause_scan": "Scannen pausieren",
@@ -927,6 +949,15 @@
     },
     "select_file": {
       "error": "Dateiauswahl fehlgeschlagen."
+    },
+    "file_refresh": {
+      "status": "Aktualisierungsstatus",
+      "running": "Wird aktualisiert…",
+      "cancelling": "Wird abgebrochen…",
+      "cancelled": "Abgebrochen",
+      "complete": "Abgeschlossen",
+      "succeeded": "Aktualisiert: {count}",
+      "failed": "Fehlgeschlagen: {count}"
     },
     "image_editor": {
       "title": "Bearbeiten",
@@ -1231,9 +1262,6 @@
       "section_file_display": "Dateianzeige",
       "group_raw_jpeg_pairs": "RAW-Paare gruppieren",
       "group_raw_jpeg_pairs_hint": "Passende RAW- und JPEG/HEIC-Dateien als ein Element anzeigen",
-      "small_file_filter": "Filter für kleine Dateien",
-      "small_file_filter_hint": "Blendet Dateien aus, wenn Breite und Höhe kleiner als die gewählte Größe sind",
-      "small_file_filter_options": ["Aus", "160 px", "320 px", "640 px"],
       "section_sorting": "Sortierung",
       "folder_sort": "Ordner",
       "folder_sort_hint": "Sortierreihenfolge für unter Alben angezeigte Ordner",
@@ -1265,9 +1293,6 @@
     "grid": {
       "title": "Layout",
       "section_grid": "Raster",
-      "dbl_click_thumbnail": "Miniaturansicht doppelklicken",
-      "dbl_click_quick_preview": "Schnellvorschau",
-      "dbl_click_new_window": "In neuem Fenster öffnen",
       "style": "Stil",
       "style_options": [
         "Kartenansicht",

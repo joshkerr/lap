@@ -88,6 +88,12 @@ export const useFileMenuItems = (
         action: createAction('compare-selected-images'),
       },
       externalAppMenu(externalAppKind),
+      {
+        label: localeMsg.value.menu.file.refresh_file_info,
+        icon: markRaw(IconRefresh),
+        disabled: selectionCount === 0,
+        action: createAction('refresh-file-info'),
+      },
     ];
   };
 

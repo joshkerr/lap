@@ -72,7 +72,7 @@
     },
     "edit": {
       "title_add": "新規アルバム",
-      "title": "アルバム情報",
+      "title": "アルバムを編集",
       "folder": "フォルダー",
       "select_folder": "フォルダーを選択",
       "name": "名前",
@@ -92,10 +92,32 @@
       "scanning_files": "{current}/{total} ファイル ({size})",
       "files_count": "{count} ファイル ({size})",
       "files_count_without_size": "{count} ファイル",
+      "section_scan_preview": "スキャンのプレビュー",
+      "excluded_files": "除外済み",
+      "preview_updating": "更新中…",
+      "preview_unavailable": "スキャンのプレビューを取得できません",
       "files_counting": "ファイルを計算中...",
       "created_at": "作成日",
       "modified_at": "変更日",
-      "last_scan_time": "最終スキャン"
+      "last_scan_time": "最終スキャン",
+      "tab_general": "一般",
+      "file_types": "ファイル形式を除外",
+      "photos": "写真",
+      "raw": "RAW",
+      "file_types_required": "少なくとも1つのファイル形式を対象として残してください。",
+      "pixel_filter": "小さい画像を除外",
+      "filter_off": "オフ",
+      "pixel_hint": "幅と高さが両方ともこの値未満の画像を除外します。",
+      "excluded_folders": "フォルダーを除外",
+      "excluded_hint": "ルートフォルダー直下のサブフォルダーを選択すると、その中のすべての内容が除外されます。",
+      "search_folders": "フォルダーを検索",
+      "loading_folders": "フォルダーを読み込み中…",
+      "folders_unavailable": "フォルダーを読み込めません。保存済みの除外設定は保持されます。",
+      "no_subfolders": "直下にサブフォルダーがありません。",
+      "save_update": "保存して更新",
+      "save_failed": "アルバム設定を保存できませんでした。もう一度お試しください。",
+      "file_types_hint": "選択したファイル形式はこのアルバムから除外されます。",
+      "tab_exclusions": "除外設定"
     },
     "no_albums": {
       "title": "アルバムがありません",
@@ -639,7 +661,7 @@
     },
     "album": {
       "add": "新規アルバム",
-      "edit": "アルバム情報...",
+      "edit": "アルバムを編集...",
       "scan": "アルバムをスキャン",
       "reorder": "並べ替え",
       "pause_scan": "スキャンを一時停止",
@@ -927,6 +949,15 @@
     },
     "select_file": {
       "error": "ファイル選択に失敗しました。"
+    },
+    "file_refresh": {
+      "status": "更新状況",
+      "running": "更新中…",
+      "cancelling": "キャンセル中…",
+      "cancelled": "キャンセル済み",
+      "complete": "完了",
+      "succeeded": "更新済み：{count}",
+      "failed": "失敗：{count}"
     },
     "image_editor": {
       "title": "編集",
@@ -1231,9 +1262,6 @@
       "section_file_display": "ファイル表示",
       "group_raw_jpeg_pairs": "RAWペアをまとめて表示",
       "group_raw_jpeg_pairs_hint": "一致する RAW と JPEG/HEIC ファイルを 1 つの項目として表示します",
-      "small_file_filter": "小さいファイルのフィルター",
-      "small_file_filter_hint": "幅と高さの両方が選択したサイズ未満のファイルを非表示にします",
-      "small_file_filter_options": ["オフ", "160 px", "320 px", "640 px"],
       "section_sorting": "並べ替え",
       "folder_sort": "フォルダ",
       "folder_sort_hint": "アルバム配下に表示されるフォルダの並び順です",
@@ -1265,9 +1293,6 @@
     "grid": {
       "title": "レイアウト",
       "section_grid": "グリッド",
-      "dbl_click_thumbnail": "サムネイルをダブルクリック",
-      "dbl_click_quick_preview": "クイックプレビュー",
-      "dbl_click_new_window": "新しいウィンドウで開く",
       "style": "スタイル",
       "style_options": [
         "カード表示",

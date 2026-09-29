@@ -428,7 +428,6 @@ async function loadPersons(reset = true, validateSelectedPerson = false) {
       offset: reset ? 0 : allPersons.value.length,
       limit: PERSON_PAGE_SIZE,
       search,
-      smallFileFilter: config.settings.smallFileFilter,
       refreshSummary: validateSelectedPerson
         ? { selectedPersonId: libConfig.person?.id ?? null }
         : null,
@@ -601,12 +600,6 @@ async function checkFaceStats() {
 }
 
 // Only refresh the active view. Inactive panel data is refreshed on re-entry.
-watch(() => config.settings.smallFileFilter, () => {
-  if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.PERSON) {
-    void loadPersons(true, true);
-    void checkFaceStats();
-  }
-});
 
 watch(() => [config.main.sidebarIndex, libConfig.activePane], () => {
   if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.PERSON) {

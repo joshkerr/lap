@@ -292,6 +292,7 @@
             >
               <MediaViewer
                 ref="filmStripMediaRef"
+                @close="closeFilmstripFullScreen"
                 :mode="1"
                 :isFullScreen="false"
                 :file="fileList[selectedItemIndex]"
@@ -540,6 +541,14 @@
     @reset="errorMessage = ''"
   />
 
+  <RefreshFileInfoDialog
+    v-if="fileRefreshSelection"
+    :file-ids="fileRefreshSelection.ids"
+    :library-id="fileRefreshSelection.libraryId"
+    :finish-refresh="finishSelectedFileRefresh"
+    @close="fileRefreshSelection = null"
+  />
+
   <!-- move to -->
   <MoveTo
     v-if="showMoveTo"
@@ -716,6 +725,7 @@ import { ref, watch, computed, createVNode, onMounted, onBeforeUnmount, nextTick
 import { emit as tauriEmit, listen } from '@tauri-apps/api/event';
 import { ask, open as openDialog } from '@tauri-apps/plugin-dialog';
 import { WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { PREVIEW_WINDOW_FOCUS_RESTORED } from '@/common/previewWindow';
 import { useI18n } from 'vue-i18n';
 import { useToast } from '@/common/toast';
 import { useUIStore } from '@/stores/uiStore';
@@ -757,6 +767,8 @@ import { useFileMenuItems } from '@/common/fileMenu';
 import Welcome from '@/components/Welcome.vue';
 import MediaViewer from '@/components/MediaViewer.vue';
 import MessageBox from '@/components/MessageBox.vue';
+import RefreshFileInfoDialog from '@/components/RefreshFileInfoDialog.vue';
+import { fileInfoRevision } from '@/common/fileInfoRefresh';
 import IndexRecoveryDialog from '@/components/IndexRecoveryDialog.vue';
 import MoveTo from '@/components/MoveTo.vue';
 import TButton from '@/components/TButton.vue';
@@ -956,6 +968,7 @@ const isContentHovered = ref(false);
 
 // file list
 const fileList = ref<any[]>([]);
+const contentReady = ref(false);  // true after current view's content has loaded (empty or not), reset on navigation
 const groupedRows = ref<any[]>([]);
 const totalFileCount = ref(0);    // total files' count
 const totalRowCount = ref(0);     // total render rows' count (group headers + files)
@@ -990,6 +1003,7 @@ type SelectionRestoreState = {
   selectedSize: number;
   viewportFileId: number;
   fallbackFileId: number;
+  refreshSizes?: boolean;
 };
 let pendingSelectionRestore: SelectionRestoreState | null = null;
 let isRestoringSelection = false;
@@ -1068,6 +1082,9 @@ type ImageViewerSession =
 // A comparison window owns a snapshot of the selected files. Background content
 // refreshes must not replace that source with the live file list.
 const imageViewerSession = ref<ImageViewerSession>({ mode: 'normal' });
+// True while the separate image viewer window exists, so selection changes can
+// push updates without an async window lookup when no viewer is open.
+const isImageViewerWindowOpen = ref(false);
 
 function removeDeletedFilesFromImageViewerSession(fileIds: number[]) {
   const session = imageViewerSession.value;
@@ -1080,6 +1097,22 @@ function removeDeletedFilesFromImageViewerSession(fileIds: number[]) {
     files,
   };
   return files.length;
+}
+
+const fileRefreshSelection = ref<{ ids: number[]; libraryId: string } | null>(null);
+function startSelectedFileRefresh() {
+  if (fileRefreshSelection.value || selectedFileIds.size === 0) return;
+  fileRefreshSelection.value = { ids: Array.from(selectedFileIds), libraryId: libConfig._libraryId };
+}
+async function finishSelectedFileRefresh() {
+  const selection = fileRefreshSelection.value;
+  if (!selection || selection.libraryId !== libConfig._libraryId) return;
+  for (const id of selection.ids) clearCachedThumbnailDataUrl(id, config.settings.thumbnailSize);
+  fileInfoRevision.value++;
+  // updateContent dispatches list queries without awaiting their completion.
+  // Restore selection from the contentReady watcher, never from a transient
+  // empty list while those queries are still loading.
+  await updateContent(true, true);
 }
 
 const selectionMenuRef = ref<InstanceType<typeof ContextMenu> | null>(null);
@@ -1162,6 +1195,7 @@ function captureSelectionForFileListRefresh() {
   const activeFileId = Number(fileList.value[selectedItemIndex.value]?.id || 0);
   pendingSelectionRestore = {
     selectedIds: new Set(selectedFileIds),
+    refreshSizes: Boolean(fileRefreshSelection.value),
     selectedSizes,
     selectedSize: selectedSize.value,
     viewportFileId: activeFileId,
@@ -1171,7 +1205,15 @@ function captureSelectionForFileListRefresh() {
 
 async function restoreSelectionAfterFileListRefresh() {
   const restoreState = pendingSelectionRestore;
-  if (!restoreState || isRestoringSelection || fileList.value.length === 0) return;
+  if (!restoreState || isRestoringSelection || !contentReady.value) return;
+  if (fileList.value.length === 0) {
+    pendingSelectionRestore = null;
+    resetSelectionSummary();
+    // Only metadata refresh promises to keep multi-select on an empty result.
+    // Other refresh flows must not override the current mode here.
+    if (restoreState.refreshSizes) selectMode.value = true;
+    return;
+  }
 
   isRestoringSelection = true;
   const requestId = currentContentRequestId;
@@ -1195,6 +1237,20 @@ async function restoreSelectionAfterFileListRefresh() {
     const nextSelectedIds = new Set(
       Array.from(restoreState.selectedIds).filter(id => availableIds.has(id)),
     );
+
+    // A metadata refresh may change sizes, including files outside loaded rows.
+    if (restoreState.refreshSizes) {
+      const ids = Array.from(nextSelectedIds);
+      for (let offset = 0; offset < ids.length; offset += 200) {
+        const files = await getFilesByIds(ids.slice(offset, offset + 200));
+        if (requestId !== currentContentRequestId || pendingSelectionRestore !== restoreState) {
+          retryForNewerRefresh = true;
+          return;
+        }
+        if (!Array.isArray(files)) return;
+        for (const file of files) restoreState.selectedSizes.set(Number(file.id), Number(file.size || 0));
+      }
+    }
 
     const viewportFileId = availableIds.has(restoreState.viewportFileId)
       ? restoreState.viewportFileId
@@ -1231,7 +1287,7 @@ async function restoreSelectionAfterFileListRefresh() {
       if (isRealFileItem(file)) file.isSelected = selectedFileIds.has(Number(file.id));
     }
     selectedCount.value = selectedFileIds.size;
-    selectedSize.value = nextSelectedIds.size === restoreState.selectedIds.size
+    selectedSize.value = !restoreState.refreshSizes && nextSelectedIds.size === restoreState.selectedIds.size
       ? restoreState.selectedSize
       : Array.from(selectedFileIds).reduce(
           (total, fileId) => total + Number(restoreState.selectedSizes.get(fileId) || 0),
@@ -1321,8 +1377,9 @@ async function scrollToGroupedFile(fileIndex: number) {
   }
 }
 
-watch(fileList, () => {
-  if (pendingSelectionRestore && fileList.value.length > 0) {
+watch([fileList, contentReady], () => {
+  if (!contentReady.value) return;
+  if (pendingSelectionRestore) {
     void restoreSelectionAfterFileListRefresh();
   } else if (pendingFocusedFileId && fileList.value.length > 0) {
     void restoreFocusedFileAfterListRefresh();
@@ -1871,6 +1928,11 @@ const filmStripZoomFit = ref(true);
 function closeQuickPreview() {
   showQuickView.value = false;
   stopSlideShow();
+}
+
+function closeFilmstripFullScreen() {
+  stopSlideShow();
+  void filmStripMediaRef.value?.exitPreviewFullScreen();
 }
 
 function setPreviewViewBackground(value: number) {
@@ -3019,7 +3081,6 @@ const isLoading = ref(false);     // show loading status in GridView (for empty 
 const imageSearchError = ref(false);
 const imageSearchLanguageUnsupported = ref(false);
 const hasLoadedInitialResult = ref(false); // avoid showing "No files found" before first real result returns
-const contentReady = ref(false);  // true after current view's content has loaded (empty or not), reset on navigation
 const contentCountIsAuthoritative = ref(false);
 const dedupSourceVersion = ref(0);
 
@@ -3049,7 +3110,6 @@ const currentQueryParams = ref({
   tagId: 0,
   tagGroupId: 0,
   personId: 0,
-  smallFileFilter: 0,
 });
 const currentQuerySource = ref<'query' | 'smart' | 'collection' | 'search'>('query');
 const isMapView = computed(() => config.settings.grid.viewMode === 'map');
@@ -3071,15 +3131,9 @@ watch(isMapView, (active) => {
   if (active) mapViewMounted.value = true;
 });
 
-function passesSmallFileFilter(file: any) {
-  const threshold = Number(config.settings.smallFileFilter || 0);
-  if (![160, 320, 640].includes(threshold)) return true;
-
-  const width = Number(file?.width || 0);
-  const height = Number(file?.height || 0);
-  if (width <= 0 || height <= 0) return true;
-
-  return width >= threshold || height >= threshold;
+function passesAlbumFilters(file: any) {
+  // Direct ID lookups also carry visibility computed from the owning album.
+  return file?.album_visible !== false;
 }
 
 type SaveAsContext = {
@@ -3559,13 +3613,8 @@ function handleItemDblClicked(
   modifiers: { shiftKey?: boolean; metaKey?: boolean; ctrlKey?: boolean } = {}
 ) {
   if (!ensureGroupedFileAtIndex(index)) return;
-  const file = fileList.value[index];
-  const isMedia = file?.file_type === 1 || file?.file_type === 2 || file?.file_type === 3;
   const openInNewWindow = !!(
-    modifiers.shiftKey ||
-    modifiers.metaKey ||
-    modifiers.ctrlKey ||
-    (config.settings.dblClickAction === 'newWindow' && isMedia)
+    modifiers.shiftKey || modifiers.metaKey || modifiers.ctrlKey
   );
   if (openInNewWindow) {
     checkUnsavedChanges(() => {
@@ -3870,6 +3919,8 @@ async function handleTimelineSelectItem(index: number) {
 
 function clickRename() {
   if (selectMode.value) return;
+  // Skip while an inline input is active (e.g. FileInfo rename, where Enter confirms the edit).
+  if (uiStore.inputStack.length > 0) return;
   renamingFileName.value = extractFileName(fileList.value[selectedItemIndex.value].name);
   showRenameMsgbox.value = true;
 }
@@ -3909,7 +3960,7 @@ function handleItemAction(payload: { action: string, index: number }) {
   if (isSlideShow.value) return;
 
   const { action, index } = payload;
-  selectedItemIndex.value = index; // Ensure the item for the action is selected
+  if (index >= 0) selectedItemIndex.value = index; // Panel actions have no thumbnail index.
 
   if (action.startsWith('rating-')) {
     const rating = Number.parseInt(action.slice('rating-'.length), 10);
@@ -3972,7 +4023,7 @@ function handleItemAction(payload: { action: string, index: number }) {
       }
     },
     'reveal': () => revealPath(fileList.value[selectedItemIndex.value].file_path),
-    'refresh-file-info': () => void updateFile(fileList.value[selectedItemIndex.value], true),
+    'refresh-file-info': () => selectMode.value ? startSelectedFileRefresh() : void updateFile(fileList.value[selectedItemIndex.value], true),
     'favorite': toggleFavorite,
     'rotate': clickRotate,
     'info': toggleInfoPanel,
@@ -4225,9 +4276,18 @@ function handleLocalKeyDown(event: KeyboardEvent) {
   }
 
   if (matchesShortcut('view.close', event, shortcutPlatform)) {
-    if (selectMode.value && showQuickView.value) {
-      closeQuickPreview();
+    // Close Quick Preview in one step, even in fullscreen. Unmount restores
+    // the native window while preserving the saved fullscreen preference.
+    if (showQuickView.value) {
       event.preventDefault();
+      closeQuickPreview();
+      return;
+    }
+    // Filmstrip is an embedded layout, so Escape returns to that layout.
+    const preview = getActivePreviewMediaRef();
+    if (preview?.isFullScreen) {
+      event.preventDefault();
+      void preview.exitPreviewFullScreen();
       return;
     }
     if (selectMode.value) {
@@ -4236,11 +4296,6 @@ function handleLocalKeyDown(event: KeyboardEvent) {
       } else {
         handleSelectMode(false);
       }
-      event.preventDefault();
-      return;
-    }
-    if (showQuickView.value) {
-      closeQuickPreview();
       event.preventDefault();
       return;
     }
@@ -4519,9 +4574,18 @@ function isContentInteractionActive() {
   return isContentHovered.value && !uiStore.mapActive;
 }
 
-function activateContentPane() {
+function activateContentPane(event?: Event) {
   uiStore.setActivePane('content');
+  // Don't steal focus from an editable field: this mousedown.capture runs before the field's own
+  // handlers, so focusing contentRoot would blur it (e.g. abort FileInfo's rename on a mere click).
+  const target = event?.target as HTMLElement | null;
+  if (target?.closest?.('input, textarea, [contenteditable="true"]')) return;
   contentRootRef.value?.focus({ preventScroll: true });
+}
+
+function restoreOpenPreviewFocus() {
+  if (uiStore.inputStack.length > 0) return;
+  activateContentPane();
 }
 
 function handleContentWheel(event: WheelEvent) {
@@ -5117,6 +5181,7 @@ onMounted( async() => {
   hasRestoredInitialSelection = false;
 
   window.addEventListener('keydown', handleLocalKeyDown);
+  window.addEventListener(PREVIEW_WINDOW_FOCUS_RESTORED, restoreOpenPreviewFocus);
   window.addEventListener('keyup', handleLocalKeyUp);
   unlistenKeydown = await listen('global-keydown', handleKeyDown);
 
@@ -5273,6 +5338,13 @@ onMounted( async() => {
           }
           if (!isRealFileItem(fileList.value[requestIndex])) {
             await fetchDataRange(requestIndex, requestIndex + 2);
+          }
+          // Reflect the viewer's navigation in the main-window selection so the
+          // grid highlight/scroll follows the image being viewed.
+          if (pane === 'left' && selectedItemIndex.value !== requestIndex) {
+            suppressImageViewerSync = true;
+            selectedItemIndex.value = requestIndex;
+            void nextTick(() => { suppressImageViewerSync = false; });
           }
         }
         const viewerFiles = session.mode === 'compare' ? session.files : fileList.value;
@@ -5533,7 +5605,13 @@ onMounted( async() => {
   });
 
   unlistenAlbumUpdated = await listen('album-updated', (event: any) => {
-    const { albumId, name } = event.payload || {};
+    const { albumId, name, filtersChanged } = event.payload || {};
+    if (filtersChanged) {
+      clearFolderFileCounts();
+      uiStore.clearCountUpdateRequest();
+      libConfig.clearLazySidebarCounts();
+      scheduleContentRefresh(() => refreshContentFromSelectionChange());
+    }
     const targetId = Number(albumId || 0);
     if (targetId <= 0 || !name) return;
     for (const file of fileList.value) {
@@ -5583,6 +5661,7 @@ onBeforeUnmount(() => {
     layoutRefreshTimer = null;
   }
   window.removeEventListener('keydown', handleLocalKeyDown);
+  window.removeEventListener(PREVIEW_WINDOW_FOCUS_RESTORED, restoreOpenPreviewFocus);
   window.removeEventListener('keyup', handleLocalKeyUp);
   // unlisten
   unlistenImageViewer();
@@ -5654,7 +5733,7 @@ watch(() => libConfig.index.albumQueue.length, (newLength) => {
 });
 
 watch(
-  () => [config.settings.showSubfolderFiles, config.settings.smallFileFilter, libConfig._libraryId],
+  () => [config.settings.showSubfolderFiles, libConfig._libraryId],
   () => {
     clearFolderFileCounts();
   },
@@ -5664,20 +5743,6 @@ watch(() => libConfig._libraryId, () => {
   uiStore.clearCountUpdateRequest();
 });
 
-watch(() => config.settings.smallFileFilter, () => {
-  uiStore.clearCountUpdateRequest();
-  // Cached lazy counts were computed under the previous filter value; drop them
-  // so badges disappear instead of showing stale numbers. They repopulate on
-  // the next explicit activation of each item.
-  libConfig.clearLazySidebarCounts();
-  if (
-    libConfig.activePane !== 'main'
-    || ![SIDEBAR.CALENDAR, SIDEBAR.PERSON, SIDEBAR.LOCATION, SIDEBAR.CAMERA].includes(config.main.sidebarIndex)
-  ) {
-    return;
-  }
-  scheduleContentRefresh(() => refreshContentFromSelectionChange());
-});
 
 /// watch for file list changes
 watch(
@@ -5803,12 +5868,19 @@ watch(
 );
 
 // watch for selected item (not in select mode)
+// Set while applying an index change that originated from the image viewer, so
+// the push below does not echo the same index back to the viewer.
+let suppressImageViewerSync = false;
 watch(() => selectedItemIndex.value, (newIndex, oldIndex) => {
   if(oldIndex >= 0 && oldIndex !== newIndex && fileList.value[oldIndex]?.rotate >= 360) {
     fileList.value[oldIndex].rotate %= 360;
   }
   void setLastSelectedItemIndex(Number(newIndex ?? -1));
   updateSelectedImage(newIndex);
+  // Keep an open image viewer in sync with the main-window selection.
+  if (!suppressImageViewerSync) {
+    void syncSelectionToImageViewer(newIndex);
+  }
 });
 
 // watch for show preview or layout change
@@ -6611,7 +6683,6 @@ async function getFileList(
     tagId = 0,
     tagGroupId = 0,
     personId = 0,
-    smallFileFilter = Number(config.settings.smallFileFilter || 0),
     gpsMinLat = null,
     gpsMaxLat = null,
     gpsMinLon = null,
@@ -6654,7 +6725,6 @@ async function getFileList(
     tagId,
     tagGroupId,
     personId,
-    smallFileFilter,
     gpsMinLat,
     gpsMaxLat,
     gpsMinLon,
@@ -6740,7 +6810,7 @@ async function getMapSearchClusterFileList(fileIds: number[], gpsParams: Record<
     if (requestId !== currentContentRequestId) return;
 
     const inCluster = (files || []).filter((file: any) => {
-      if (!passesSmallFileFilter(file)) return false;
+      if (!passesAlbumFilters(file)) return false;
       if (exactMembers) return true;
       if (file.gps_latitude == null || file.gps_longitude == null || file.gps_latitude === '' || file.gps_longitude === '') return false;
       const lat = Number(file.gps_latitude);
@@ -6797,7 +6867,6 @@ async function getCollectionFileList(collectionId: number, requestId: number) {
     calendarSort: config.settings.calendarSort,
     folderSort: config.settings.folderSort,
     categorySort: config.settings.categorySort,
-    smallFileFilter: Number(config.settings.smallFileFilter || 0),
     make: '',
     model: '',
     lensMake: '',
@@ -6882,7 +6951,6 @@ async function getSmartFileList(smartAlbum: any, requestId: number) {
     folderSort: Number(config.settings.folderSort || 0),
     calendarSort: Number(config.settings.calendarSort || 0),
     categorySort: Number(config.settings.categorySort || 0),
-    smallFileFilter: Number(config.settings.smallFileFilter || 0),
     groupBy: effectiveGroupBy.value,
   };
   void refreshDedupSmartFileIds(requestId, currentSmartQueryParams.value);
@@ -7002,7 +7070,7 @@ async function getImageSearchFileList(
     if (result) {
       clearSelectionForFileListUpdate();
       resetGroupingState();
-      fileList.value = preserveLoadedThumbnails(result.filter(passesSmallFileFilter));
+      fileList.value = preserveLoadedThumbnails(result.filter(passesAlbumFilters));
       contentCountIsAuthoritative.value = true;
       currentSearchFileIds.value = fileList.value
         .map(file => Number(file.id))
@@ -7059,7 +7127,6 @@ async function getUnifiedSearchFileList(searchText: string, requestId: number) {
     calendarSort: config.settings.calendarSort,
     folderSort: config.settings.folderSort,
     categorySort: config.settings.categorySort,
-    smallFileFilter: Number(config.settings.smallFileFilter || 0),
     make: '',
     model: '',
     lensMake: '',
@@ -7115,7 +7182,7 @@ async function getUnifiedSearchFileList(searchText: string, requestId: number) {
     const textIds = new Set(textMatches.map((file: any) => Number(file.id)));
     const visualMatches = (Array.isArray(visualResult) ? visualResult : [])
       .filter((file: any) => !textIds.has(Number(file.id)))
-      .filter(passesSmallFileFilter);
+      .filter(passesAlbumFilters);
     const files = preserveLoadedThumbnails([...textMatches, ...visualMatches]);
     contentCountIsAuthoritative.value = true;
 
@@ -9509,8 +9576,15 @@ const handleGroupSelect = (optionIndex: any) => {
 };
 
 const toggleInfoPanel = () => {
-  checkUnsavedChanges(() => {
-    if (isInfoPanelOpen.value) {
+  checkUnsavedChanges(async () => {
+    const preview = getActivePreviewMediaRef();
+    const wasPreviewFullScreen = !!preview?.isFullScreen;
+    if (wasPreviewFullScreen) {
+      await preview.exitPreviewFullScreen();
+      // A pending transition or failed window restore must not open a hidden panel.
+      if (preview.isFullScreen) return;
+    }
+    if (isInfoPanelOpen.value && !wasPreviewFullScreen) {
       config.rightPanel.show = false;
       return;
     }
@@ -10112,11 +10186,13 @@ async function openImageViewer(
       });
 
       imageWindow.once('tauri://created', () => {
+        isImageViewerWindowOpen.value = true;
         console.log('ImageViewer window created');
         videoRef.value?.pause();  // pause video playing in preview pane
       });
 
       imageWindow.once('tauri://close-requested', () => {
+        isImageViewerWindowOpen.value = false;
         imageWindow?.close();
       });
 
@@ -10125,6 +10201,7 @@ async function openImageViewer(
       });
     }
   } else {    // update the existing window
+    isImageViewerWindowOpen.value = true;
     await imageWindow.emit('update-img', { 
       fileId: leftFileId, 
       fileIndex: leftIndex,   // selected file index
@@ -10170,6 +10247,29 @@ async function openImageViewer(
     }
     videoRef.value?.pause();  // pause video playing in preview pane
   }
+}
+
+// Push the main-window selection to an open (normal-mode) image viewer, reusing
+// the existing update-img channel. Gated on isImageViewerWindowOpen so a
+// selection change does no async window lookup when no viewer is open, and it
+// re-checks the selection after the await so the latest index wins when the
+// user navigates rapidly (out-of-order getByLabel resolutions cannot regress
+// the viewer to a stale image).
+async function syncSelectionToImageViewer(index: number) {
+  if (!isImageViewerWindowOpen.value) return;
+  if (imageViewerSession.value.mode !== 'normal') return;
+  if (!isRealFileItem(fileList.value[index])) return;
+  const imageWindow = await WebviewWindow.getByLabel('imageviewer');
+  if (!imageWindow || selectedItemIndex.value !== index) return;
+  const file = fileList.value[index];
+  const next = fileList.value[index + 1];
+  imageWindow.emit('update-img', {
+    fileId: file.id,
+    fileIndex: index,
+    fileCount: fileList.value.length,
+    nextFilePath: next && !next.isPlaceholder && next.file_type === 1 ? next.file_path : '',
+    pane: 'left',
+  });
 }
 
 async function openImageEditor(index: number) {

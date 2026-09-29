@@ -20,6 +20,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Pin the Tauri CLI so bundled toolchain changes in a floating
+  # `@tauri-apps/cli@v2` cannot silently break packaging. Bump deliberately.
+  TAURI_CLI_VERSION: '2.12.0'
+
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -31,8 +36,8 @@ jobs:
         run: |
           set -euo pipefail
           ALL='[
-            {"arch":"x64","runner":"windows-2022","target":"x86_64-pc-windows-msvc","msvc_arch":"x64","platform_key":"windows-x86_64","artifact_name":"windows-x86_64","msi_glob":"*_x64_*.msi"},
-            {"arch":"arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc","msvc_arch":"arm64","platform_key":"windows-aarch64","artifact_name":"windows-aarch64","msi_glob":"*_arm64_*.msi"}
+            {"arch":"x64","runner":"windows-2022","target":"x86_64-pc-windows-msvc","msvc_arch":"x64","msvc_vsversion":"2022","platform_key":"windows-x86_64","artifact_name":"windows-x86_64","msi_glob":"*_x64_*.msi"},
+            {"arch":"arm64","runner":"windows-11-arm","target":"aarch64-pc-windows-msvc","msvc_arch":"arm64","msvc_vsversion":"","platform_key":"windows-aarch64","artifact_name":"windows-aarch64","msi_glob":"*_arm64_*.msi"}
           ]'
 
           INPUT="${{ github.event.inputs.build_target }}"
@@ -133,7 +138,7 @@ jobs:
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: ${{ matrix.msvc_arch }}
-          vsversion: "2022"
+          vsversion: ${{ matrix.msvc_vsversion }}
 
       - name: Remove ranlib from PATH
         shell: pwsh
@@ -156,6 +161,9 @@ jobs:
         shell: pwsh
         run: .\scripts\download_ffmpeg_sidecar.ps1 -Arch ${{ matrix.arch }}
 
+      - name: Install pinned Tauri CLI
+        run: npm install -g @tauri-apps/cli@${{ env.TAURI_CLI_VERSION }}
+
       - name: Build and Sign (Windows ${{ matrix.arch }})
         uses: tauri-apps/tauri-action@v0.5
         env:
@@ -165,6 +173,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
+          tauriScript: tauri
           args: --verbose --target ${{ matrix.target }} --bundles msi
 
       - name: Upload Build Artifact (Windows ${{ matrix.arch }})

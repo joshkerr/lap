@@ -10,8 +10,8 @@ pub struct TagGroup {
     pub count: i64,
 }
 
-pub fn get_all(small_file_filter: i64) -> Result<Vec<TagGroup>, String> {
-    let counts = ATag::get_group_counts(small_file_filter)?;
+pub fn get_all() -> Result<Vec<TagGroup>, String> {
+    let counts = ATag::get_group_counts()?;
     let conn = open_conn()?;
     let mut stmt = conn.prepare("SELECT id, name, is_default FROM atag_groups ORDER BY is_default DESC, sort_order, name COLLATE NOCASE, id").map_err(|e| e.to_string())?;
     let rows = stmt
@@ -255,12 +255,12 @@ mod tests {
     #[test]
     fn version_17_creates_groups_with_persistent_ordering() {
         let conn = Connection::open_in_memory().unwrap();
-        conn.execute_batch("CREATE TABLE atags(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE); PRAGMA user_version = 16;").unwrap();
+        conn.execute_batch("CREATE TABLE albums(id INTEGER PRIMARY KEY); CREATE TABLE atags(id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE); PRAGMA user_version = 16;").unwrap();
         crate::t_migration::check_and_migrate(&conn).unwrap();
         let version: i64 = conn
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
-        assert_eq!(version, 17);
+        assert_eq!(version, 18);
         let a = save_on(&conn, None, "A").unwrap();
         let b = save_on(&conn, None, "B").unwrap();
         let default: i64 = conn

@@ -12,7 +12,7 @@ use once_cell::sync::Lazy;
 use pinyin::ToPinyin;
 use rstar::{AABB, PointDistance, RTree, RTreeObject};
 use serde::Serialize;
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::Read;
 #[cfg(target_os = "windows")]
@@ -350,7 +350,10 @@ impl FileNode {
         );
 
         // Recursively read subfolders and files
-        root_node.children = Some(Self::recurse_nodes(root_path, is_recursive, sort)?);
+        let album = Album::get_all_albums()?.into_iter()
+            .filter(|album| root_path.starts_with(&album.path))
+            .max_by_key(|album| Path::new(&album.path).components().count());
+        root_node.children = Some(Self::recurse_nodes(root_path, is_recursive, sort, album.as_ref())?);
         root_node.has_subfolders = root_node
             .children
             .as_ref()
@@ -360,14 +363,14 @@ impl FileNode {
     }
 
     /// Recurse sub-folders
-    fn recurse_nodes(path: &Path, is_recursive: bool, sort: i64) -> Result<Vec<Self>, String> {
+    fn recurse_nodes(path: &Path, is_recursive: bool, sort: i64, album: Option<&Album>) -> Result<Vec<Self>, String> {
         let mut nodes: Vec<FileNode> = Vec::new();
 
         for entry in WalkDir::new(path)
             .min_depth(1)
             .max_depth(1)
             .into_iter()
-            .filter_entry(is_visible_or_root)
+            .filter_entry(|entry| is_visible_or_root(entry) && !album.is_some_and(|album| album.excludes_path(entry.path())))
         {
             let entry = entry.map_err(|e| e.to_string())?;
             let entry_path = entry.path();
@@ -388,7 +391,7 @@ impl FileNode {
                 );
 
                 if is_recursive {
-                    node.children = Some(Self::recurse_nodes(entry_path, is_recursive, sort)?);
+                    node.children = Some(Self::recurse_nodes(entry_path, is_recursive, sort, album)?);
                     node.has_subfolders = node
                         .children
                         .as_ref()
@@ -1834,6 +1837,10 @@ pub fn get_folder_files(
         Ok(Some(folder)) if !album_removal_pending(folder.album_id) => folder,
         _ => return (Vec::new(), new_count, updated_count),
     };
+    let album = match Album::get_album_by_id(folder.album_id) {
+        Ok(album) if !album.excludes_path(Path::new(folder_path)) => album,
+        _ => return (Vec::new(), 0, 0),
+    };
     let album_sync_lock = album_sync_lock(folder.album_id);
     let _album_sync_guard = match album_sync_lock.lock() {
         Ok(guard) => guard,
@@ -1878,6 +1885,15 @@ pub fn get_folder_files(
             };
 
             if let Some(ftype) = get_file_type(file_path_str) {
+                if !album.allows_file_type(ftype) { continue; }
+                match skip_excluded_image(&album, file_path_str, ftype) {
+                    Ok(true) => continue,
+                    Ok(false) => {},
+                    Err(error) => {
+                        eprintln!("Failed to retain excluded image: {error}");
+                        continue;
+                    }
+                }
                 let now = Utc::now().timestamp_millis();
                 match AFile::add_to_db(resolved_folder_id, file_path_str, ftype, now) {
                     Ok((file, status)) => {
@@ -1899,6 +1915,14 @@ pub fn get_folder_files(
         file_list
     };
 
+    files.retain(|file| album.allows_file_type(file.file_type.unwrap_or_default()));
+    files.retain(|file| {
+        if file.file_type == Some(2) { return true; }
+        let threshold = album.small_image_filter as u32;
+        let width = file.width.unwrap_or(0);
+        let height = file.height.unwrap_or(0);
+        width == 0 || height == 0 || width >= threshold || height >= threshold
+    });
     files = hide_live_photo_companion_videos(files);
     files.retain(|file| matches_file_type_filter(file_type, file.file_type.unwrap_or_default()));
 
@@ -2264,6 +2288,11 @@ fn scan_new_child_folders(
     folder_path: &str,
     reconcile_removed_children: bool,
 ) -> Result<ChildFolderScan, String> {
+    let album = Album::get_album_by_id(album_id)?;
+    if album.excludes_path(Path::new(folder_path)) {
+        return Ok(ChildFolderScan { folders: Vec::new(), child_paths: Vec::new(), has_subfolders: false,
+            deleted_folder_count: 0, folder_path_migrations: Vec::new() });
+    }
     let entries = fs::read_dir(folder_path).map_err(|e| e.to_string())?;
     let mut has_subfolders = false;
     let mut seen_paths = HashSet::new();
@@ -2279,6 +2308,7 @@ fn scan_new_child_folders(
         if !file_type.is_dir() {
             continue;
         }
+        if album.excludes_path(&entry.path()) { continue; }
         has_subfolders = true;
 
         let child_path = entry.path().to_string_lossy().to_string();
@@ -2345,6 +2375,8 @@ fn sync_folder_direct_files(
     generation: u64,
     full_live_photo_reindex: bool,
 ) -> Result<FolderSyncOutcome, String> {
+    let album = Album::get_album_by_id(album_id)?;
+    if album.excludes_path(Path::new(folder_path)) { return Ok(FolderSyncOutcome::default()); }
     let scan_time = Utc::now().timestamp_millis();
     let mut seen_names = HashSet::new();
     let mut seen_inodes = HashSet::new();
@@ -2399,6 +2431,7 @@ fn sync_folder_direct_files(
         }
 
         if let Some(ftype) = get_file_type(file_path_str) {
+            if !album.allows_file_type(ftype) || skip_excluded_image(&album, file_path_str, ftype)? { continue; }
             // Check for rename: a file whose file_id matches a known DB record
             // with a different name.
             let renamed: Option<(i64, String)> = file_id(path).and_then(|fid| {
@@ -2430,7 +2463,7 @@ fn sync_folder_direct_files(
                     if is_live_photo_candidate_name(&old_file_name) {
                         live_photo_affected_names.insert(old_file_name);
                     }
-                    if should_process_synced_file(&updated_file, ftype) {
+                    if should_process_synced_file(&updated_file, ftype, album.small_image_filter) {
                         tasks.push(SyncedFileTask {
                             file_id: db_id,
                             file_path: file_path_str.to_string(),
@@ -2458,7 +2491,7 @@ fn sync_folder_direct_files(
                                 live_photo_affected_names.insert(file_name.clone());
                             }
                         }
-                        if should_process_synced_file(&file, ftype) {
+                        if should_process_synced_file(&file, ftype, album.small_image_filter) {
                             if let Some(file_id) = file.id {
                                 tasks.push(SyncedFileTask {
                                     file_id,
@@ -2499,7 +2532,7 @@ fn sync_folder_direct_files(
         let mut count = 0u32;
         if let Ok(files) = AFile::get_files_by_folder_id(folder_id) {
             for file in files {
-                if seen_names.contains(&file.name) {
+                if !file.album_visible || seen_names.contains(&file.name) {
                     continue;
                 }
                 let still_exists = file
@@ -2834,7 +2867,8 @@ pub fn refresh_album_subfolders(
     Ok(migrations)
 }
 
-fn should_process_synced_file(file: &AFile, file_type: i64) -> bool {
+fn should_process_synced_file(file: &AFile, file_type: i64, threshold: i64) -> bool {
+    if !file.album_visible || dimensions_excluded(file_type, file.width.unwrap_or(0), file.height.unwrap_or(0), threshold) { return false; }
     if !file.has_thumbnail.unwrap_or(false) {
         return true;
     }
@@ -2858,6 +2892,9 @@ fn schedule_synced_file_processing(app_handle: tauri::AppHandle, task: SyncedFil
                 Err(_) => return Ok(None),
             };
             if album_removal_pending(album_id) || Album::get_album_by_id(album_id).is_err() {
+                return Ok(None);
+            }
+            if !AFile::is_album_visible(file_id)? {
                 return Ok(None);
             }
             AThumb::get_or_create_thumb(
@@ -2903,6 +2940,9 @@ fn schedule_synced_file_processing(app_handle: tauri::AppHandle, task: SyncedFil
             if album_removal_pending(album_id) || Album::get_album_by_id(album_id).is_err() {
                 return;
             }
+            if !AFile::is_album_visible(task.file_id).unwrap_or(false) {
+                return;
+            }
             let ai_state: tauri::State<crate::t_ai::AiState> = app_handle_for_embedding.state();
             if let Err(e) = AFile::generate_embedding(&ai_state, task.file_id) {
                 eprintln!("Failed to generate embedding for {}: {}", file_path, e);
@@ -2912,8 +2952,93 @@ fn schedule_synced_file_processing(app_handle: tauri::AppHandle, task: SyncedFil
     });
 }
 
+fn dimensions_excluded(file_type: i64, width: u32, height: u32, threshold: i64) -> bool {
+    matches!(threshold, 160 | 320 | 640) && matches!(file_type, 1 | 3)
+        && width > 0 && height > 0 && width < threshold as u32 && height < threshold as u32
+}
+
+#[derive(Clone)]
+struct CachedFilterDimensions {
+    size: u64,
+    modified: SystemTime,
+    dimensions: Option<(u32, u32)>,
+}
+
+#[derive(Default)]
+struct FilterDimensionsCache {
+    entries: HashMap<Arc<str>, CachedFilterDimensions>,
+    order: VecDeque<Arc<str>>,
+    bytes: usize,
+}
+
+static FILTER_DIMENSIONS_CACHE: Lazy<Mutex<FilterDimensionsCache>> =
+    Lazy::new(|| Mutex::new(FilterDimensionsCache::default()));
+
+/// Reuse header reads between previews, pre-counting and indexing. File size and
+/// modification time invalidate changed files; the FIFO cache has a 32 MiB budget.
+fn filter_image_dimensions(path: &str, file_type: i64) -> Option<(u32, u32)> {
+    let metadata = fs::metadata(path).ok()?;
+    let modified = metadata.modified().ok()?;
+    if let Ok(cache) = FILTER_DIMENSIONS_CACHE.lock() {
+        if let Some(entry) = cache.entries.get(path) {
+            if entry.size == metadata.len() && entry.modified == modified {
+                return entry.dimensions;
+            }
+        }
+    }
+    // Never hold the cache mutex during disk reads or external metadata probes.
+    let dimensions = if file_type == 3 {
+        crate::t_image::get_raw_dimensions(path)
+    } else {
+        crate::t_image::get_image_dimensions(path)
+    }.ok();
+    if let Ok(mut cache) = FILTER_DIMENSIONS_CACHE.lock() {
+        let key: Arc<str> = Arc::from(path);
+        if !cache.entries.contains_key(path) {
+            cache.bytes += path.len() + 192;
+            cache.order.push_back(key.clone());
+        }
+        cache.entries.insert(key, CachedFilterDimensions { size: metadata.len(), modified, dimensions });
+        while cache.bytes > 32 * 1024 * 1024 {
+            let Some(oldest) = cache.order.pop_front() else { break; };
+            cache.entries.remove(&oldest);
+            cache.bytes = cache.bytes.saturating_sub(oldest.len() + 192);
+        }
+    }
+    dimensions
+}
+
+/// Unknown dimensions fail open, and video is never excluded by image dimensions.
+fn excluded_image_dimensions(path: &str, file_type: i64, threshold: i64) -> Option<(u32, u32)> {
+    if !matches!(threshold, 160 | 320 | 640) || !matches!(file_type, 1 | 3) {
+        return None;
+    }
+    let dimensions = filter_image_dimensions(path, file_type)?;
+    let (width, height) = dimensions;
+    dimensions_excluded(file_type, width, height, threshold).then_some(dimensions)
+}
+
+fn skip_excluded_image(album: &Album, path: &str, file_type: i64) -> Result<bool, String> {
+    if let Some((width, height)) = excluded_image_dimensions(path, file_type, album.small_image_filter) {
+        // Do not insert new excluded files. For previously indexed files, retain
+        // ratings/tags and update dimensions so the query exclusion stays accurate.
+        AFile::retain_excluded_image(album.id.ok_or("Album has no id")?, path, width, height)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 /// Get folder, media, and scan candidate totals (including all sub-folders).
 pub fn count_folder_files(path: &str) -> (u64, u64, u64, u64, u64, u64, u64) {
+    count_folder_files_filtered(path, 7, &[], 0)
+}
+
+pub fn count_folder_files_filtered(path: &str, file_types: i64, excluded_folders: &[String], small_image_filter: i64) -> (u64, u64, u64, u64, u64, u64, u64) {
+    count_folder_files_cancellable(path, file_types, excluded_folders, small_image_filter, || false).unwrap_or_default()
+}
+
+fn count_folder_files_cancellable(path: &str, file_types: i64, excluded_folders: &[String],
+    small_image_filter: i64, is_cancelled: impl Fn() -> bool) -> Option<(u64, u64, u64, u64, u64, u64, u64)> {
     let mut folder_count = 0;
     let mut image_file_count = 0;
     let mut total_image_size = 0;
@@ -2925,14 +3050,20 @@ pub fn count_folder_files(path: &str) -> (u64, u64, u64, u64, u64, u64, u64) {
     // Use WalkDir to iterate over directory entries
     for entry in WalkDir::new(path)
         .into_iter()
-        .filter_entry(is_visible_or_root)
+        .filter_entry(|entry| is_visible_or_root(entry)
+            && !Album::path_is_excluded(Path::new(path), excluded_folders, entry.path()))
         .filter_map(Result::ok)
     {
+        if is_cancelled() { return None; }
         let entry_type = entry.file_type();
 
         if entry_type.is_dir() {
             folder_count += 1;
         } else if entry_type.is_file() {
+            let kind = get_file_type(entry.path().to_str().unwrap_or(""));
+            let bit = match kind { Some(1) => 1, Some(2) => 2, Some(3) => 4, _ => 0 };
+            if bit != 0 && file_types & bit == 0 { continue; }
+            if kind.is_some_and(|kind| excluded_image_dimensions(&entry.path().to_string_lossy(), kind, small_image_filter).is_some()) { continue; }
             let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
             if !is_ignored_scan_sidecar(entry.path()) {
                 scan_file_count += 1;
@@ -2954,7 +3085,8 @@ pub fn count_folder_files(path: &str) -> (u64, u64, u64, u64, u64, u64, u64) {
         }
     }
 
-    (
+    if is_cancelled() { return None; }
+    Some((
         folder_count,
         image_file_count,
         total_image_size,
@@ -2962,7 +3094,7 @@ pub fn count_folder_files(path: &str) -> (u64, u64, u64, u64, u64, u64, u64) {
         total_video_size,
         scan_file_count,
         total_scan_size,
-    )
+    ))
 }
 
 fn is_ignored_scan_sidecar(path: &Path) -> bool {
@@ -3398,6 +3530,7 @@ struct ThumbnailTask {
 }
 
 struct FileIndexOutcome {
+    excluded: bool,
     task: Option<ThumbnailTask>,
     processed_immediately: bool,
     search_ready_immediately: bool,
@@ -3601,6 +3734,7 @@ fn index_single_file(
     thumbnail_size: u32,
     prefer_embedded_raw_thumbnail: bool,
     last_scan_time: i64,
+    small_image_filter: i64,
 ) -> Option<FileIndexOutcome> {
     let result = panic::catch_unwind(AssertUnwindSafe(|| {
         let parent_path = Path::new(path_str)
@@ -3614,6 +3748,10 @@ fn index_single_file(
                 if let Ok((file, _)) =
                     crate::t_sqlite::AFile::add_to_db(folder_id, path_str, ftype, last_scan_time)
                 {
+                    if dimensions_excluded(ftype, file.width.unwrap_or(0), file.height.unwrap_or(0), small_image_filter) {
+                        return Some(FileIndexOutcome { excluded: true, task: None,
+                            processed_immediately: false, search_ready_immediately: false });
+                    }
                     if let Some(file_id) = file.id {
                         let has_thumbnail = file.has_thumbnail.unwrap_or(false);
                         let needs_thumbnail_regeneration = has_thumbnail
@@ -3660,6 +3798,7 @@ fn index_single_file(
                         };
 
                         return Some(FileIndexOutcome {
+                            excluded: false,
                             task,
                             processed_immediately,
                             search_ready_immediately,
@@ -3838,9 +3977,27 @@ pub async fn index_album_worker(
         return Ok(());
     }
 
-    // 2. Count total files
-    let (_folders, image_count, _image_size, video_count, _video_size, scan_total, scan_total_size) =
-        count_folder_files(&album.path);
+    // Never persist a partial pre-count when cancellation interrupts traversal.
+    let counts = count_folder_files_cancellable(&album.path, album.file_types, &album.excluded_folders, album.small_image_filter,
+        || cancellation_token.lock().map(|flags| flags.get(&album_id) == Some(&true)).unwrap_or(true));
+    let Some((_folders, image_count, _image_size, video_count, _video_size, scan_total, scan_total_size)) = counts else {
+        app_handle.emit("index_finished", FinishedPayload {
+            album_id,
+            phase: "discovering".to_string(),
+            indexed: previous_indexed,
+            processed: previous_indexed,
+            search_ready: previous_indexed,
+            total: previous_total,
+            search_total: previous_total,
+            skipped: album.skipped_count.unwrap_or(0),
+            skipped_size: album.skipped_size.unwrap_or(0),
+            failed: album.failed_count.unwrap_or(0),
+            failed_size: album.failed_size.unwrap_or(0),
+            scan_total: previous_total,
+            scan_total_size: 0,
+        }).map_err(|e| e.to_string())?;
+        return Ok(());
+    };
     let total_files = image_count + video_count;
     let search_total = image_count;
 
@@ -3882,7 +4039,7 @@ pub async fn index_album_worker(
     let mut thumbnail_join_set: JoinSet<Result<bool, String>> = JoinSet::new();
     for entry in WalkDir::new(&album.path)
         .into_iter()
-        .filter_entry(is_visible_or_root)
+        .filter_entry(|entry| is_visible_or_root(entry) && !album.excludes_path(entry.path()))
     {
         // Check cancellation
         if let Some(&true) = cancellation_token.lock().unwrap().get(&album_id) {
@@ -3943,6 +4100,7 @@ pub async fn index_album_worker(
         if entry.file_type().is_file() {
             let path_str = entry.path().to_string_lossy().to_string();
             if let Some(ftype) = get_file_type(&path_str) {
+                if !album.allows_file_type(ftype) || skip_excluded_image(&album, &path_str, ftype)? { continue; }
                 // Resume mode: skip already-indexed prefix files.
                 if traversed_count < resume_from {
                     traversed_count += 1;
@@ -3979,6 +4137,7 @@ pub async fn index_album_worker(
                     thumbnail_size,
                     prefer_embedded_raw_thumbnail,
                     current_scan_time,
+                    album.small_image_filter,
                 ) {
                     let file_size = outcome
                         .task
@@ -3987,6 +4146,21 @@ pub async fn index_album_worker(
                         .unwrap_or_else(|| {
                             std::fs::metadata(&path_str).map(|m| m.len()).unwrap_or(0)
                         });
+                    if outcome.excluded {
+                        // Some formats reveal dimensions only during metadata reading.
+                        // Remove those candidates from all progress totals consistently.
+                        with_progress_tracker(&tracker, |tracker| {
+                            tracker.modify(|snapshot| {
+                                snapshot.total = snapshot.total.saturating_sub(1);
+                                snapshot.search_total = snapshot.search_total.saturating_sub(1);
+                                snapshot.scan_total = snapshot.scan_total.saturating_sub(1);
+                                snapshot.scan_total_size = snapshot.scan_total_size.saturating_sub(file_size);
+                            });
+                            tracker.maybe_emit();
+                        });
+                        traversed_count += 1;
+                        continue;
+                    }
                     if let Some(task) = outcome.task {
                         thumbnail_join_set.spawn(process_thumbnail_task(
                             app_handle.clone(),
@@ -4013,7 +4187,8 @@ pub async fn index_album_worker(
                     let discovered_now =
                         with_progress_tracker(&tracker, |tracker| tracker.snapshot.discovered);
                     if discovered_now % 50 == 0 || processed_now % 50 == 0 {
-                        let _ = Album::update_progress(album_id, processed_now, total_files);
+                        let current_total = with_progress_tracker(&tracker, |tracker| tracker.snapshot.total);
+                        let _ = Album::update_progress(album_id, processed_now, current_total);
                     }
                 } else {
                     let file_size = std::fs::metadata(&path_str).map(|m| m.len()).unwrap_or(0);
@@ -4062,7 +4237,7 @@ pub async fn index_album_worker(
     let scan_failed = traversal_failed || !directory_accessible(&album.path);
     let scan_complete = !is_cancelled && !scan_failed;
     if scan_complete {
-        let _ = Album::update_progress(album_id, final_snapshot.processed, total_files);
+        let _ = Album::update_progress(album_id, final_snapshot.processed, final_snapshot.total);
     } else if scan_failed {
         final_snapshot.failed += 1;
         let _ = Album::update_progress(album_id, previous_indexed, previous_total);
@@ -4197,4 +4372,78 @@ pub async fn index_album_worker(
         .map_err(|e| e.to_string())?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod album_scan_filter_tests {
+    use super::*;
+
+    #[test]
+    fn album_filters_probe_pixels_before_indexing_and_counting() {
+        let root = std::env::temp_dir().join(format!("lap-pixel-exclusions-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        image::RgbImage::new(159, 159).save(root.join("small.png")).unwrap();
+        image::RgbImage::new(160, 100).save(root.join("boundary.png")).unwrap();
+        fs::write(root.join("unknown.jpg"), b"unknown dimensions").unwrap();
+        fs::write(root.join("video.mp4"), b"video").unwrap();
+        let small = root.join("small.png").to_string_lossy().to_string();
+        assert_eq!(excluded_image_dimensions(&small, 1, 160), Some((159,159)));
+        assert_eq!(excluded_image_dimensions(&small, 2, 160), None);
+        assert_eq!(excluded_image_dimensions(&small, 1, 0), None);
+        assert_eq!(excluded_image_dimensions(&root.join("boundary.png").to_string_lossy(), 1, 160), None);
+        assert_eq!(excluded_image_dimensions(&root.join("unknown.jpg").to_string_lossy(), 1, 160), None);
+        let counts = count_folder_files_filtered(root.to_str().unwrap(), 7, &[], 160);
+        assert_eq!((counts.1, counts.3, counts.5), (2,1,3));
+        let counts = count_folder_files_filtered(root.to_str().unwrap(), 7, &[], 0);
+        assert_eq!((counts.1, counts.3, counts.5), (3,1,4));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pixel_preview_cache_invalidates_when_file_changes() {
+        let root = std::env::temp_dir().join(format!("lap-pixel-cache-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("image.png");
+        image::RgbImage::new(100, 100).save(&path).unwrap();
+        assert_eq!(filter_image_dimensions(&path.to_string_lossy(), 1), Some((100, 100)));
+        image::RgbImage::new(800, 600).save(&path).unwrap();
+        assert_eq!(filter_image_dimensions(&path.to_string_lossy(), 1), Some((800, 600)));
+        assert_eq!(excluded_image_dimensions(&path.to_string_lossy(), 1, 160), None);
+        assert_eq!(count_folder_files_cancellable(root.to_str().unwrap(), 7, &[], 160, || true), None);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cancelled_precount_does_not_return_partial_totals() {
+        let root = std::env::temp_dir().join(format!("lap-cancel-count-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        for i in 0..5 { fs::write(root.join(format!("{i}.jpg")), b"123").unwrap(); }
+        let visited = std::cell::Cell::new(0);
+        let counts = count_folder_files_cancellable(root.to_str().unwrap(), 7, &[], 0, || {
+            visited.set(visited.get() + 1);
+            visited.get() > 3
+        });
+        assert_eq!(counts, None);
+        assert_eq!(count_folder_files(root.to_str().unwrap()).5, 5);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn album_filters_count_only_selected_media_and_prune_subtrees() {
+        let root = std::env::temp_dir().join(format!("lap-album-filters-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(root.join("Exports/nested")).unwrap();
+        fs::create_dir_all(root.join("Other/Exports")).unwrap();
+        for name in ["image.jpg", "raw.cr2", "video.mp4", "Exports/nested/excluded.jpg", "Other/Exports/included.jpg"] {
+            fs::write(root.join(name), b"123").unwrap();
+        }
+        let counts = count_folder_files_filtered(root.to_str().unwrap(), 1, &["Exports".into()], 0);
+        assert_eq!((counts.1,counts.3,counts.5,counts.6),(2,0,2,6));
+        let counts = count_folder_files_filtered(root.to_str().unwrap(), 4, &[], 0);
+        assert_eq!((counts.1,counts.3,counts.5),(1,0,1));
+        let counts = count_folder_files_filtered(root.to_str().unwrap(), 2, &[], 0);
+        assert_eq!((counts.1,counts.3,counts.5),(0,1,1));
+        let counts = count_folder_files(root.to_str().unwrap());
+        assert_eq!((counts.1,counts.3,counts.5),(4,1,5));
+        fs::remove_dir_all(root).unwrap();
+    }
 }

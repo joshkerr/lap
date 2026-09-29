@@ -129,6 +129,7 @@
 <script setup lang="ts">
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { listen } from '@tauri-apps/api/event';
 import { VueDraggable } from 'vue-draggable-plus';
 import { config, libConfig } from '@/common/config';
 import { useUIStore } from '@/stores/uiStore';
@@ -154,6 +155,9 @@ const reorderingSmartAlbumId = ref<string | null>(null);
 const smartAlbumSearch = ref('');
 const isSmartAlbumSearchFocused = ref(false);
 let smartAlbumCoverLoadToken = 0;
+let smartCountRequest = 0;
+let smartCountsDisposed = false;
+const unlistenSmartCounts: (() => void)[] = [];
 
 const filteredSmartAlbums = computed(() => {
   const query = smartAlbumSearch.value.trim().toLowerCase();
@@ -166,13 +170,15 @@ watch(() => libConfig.smartAlbums, (albums) => {
 }, { immediate: true });
 
 // Counts are computed per smart query. Re-fetch whenever the set of albums or
-// their queries change (id/updatedAt) or the small-file filter changes, so each
+// their queries change (id/updatedAt), so each
 // album shows its own count instead of the currently-viewed query's count.
 const smartAlbumCountSignature = computed(() =>
   (libConfig.smartAlbums || []).map((album: any) => `${album.id}:${album.updatedAt ?? album.createdAt ?? ''}`).join('|')
 );
 
 async function refreshSmartAlbumCounts() {
+  const request = ++smartCountRequest;
+  const libraryId = libConfig._libraryId;
   const albums = customSmartAlbums.value.filter((album: any) => {
     const rules = Array.isArray(album?.query?.rules) ? album.query.rules : [];
     return rules.length > 0;
@@ -191,7 +197,6 @@ async function refreshSmartAlbumCounts() {
         folderSort: Number(config.settings.folderSort || 0),
         calendarSort: Number(config.settings.calendarSort || 0),
         categorySort: Number(config.settings.categorySort || 0),
-        smallFileFilter: Number(config.settings.smallFileFilter || 0),
       };
       const result = await getSmartQueryCountAndSum(params);
       return [String(album.id), Number(result?.[0] || 0)] as const;
@@ -200,6 +205,7 @@ async function refreshSmartAlbumCounts() {
     }
   }));
 
+  if (smartCountsDisposed || request !== smartCountRequest || libraryId !== libConfig._libraryId) return;
   const countMap = Object.fromEntries(results);
   libConfig.smartAlbums = (libConfig.smartAlbums || []).map((album: any) => ({
     ...album,
@@ -208,7 +214,7 @@ async function refreshSmartAlbumCounts() {
 }
 
 watch(
-  () => [smartAlbumCountSignature.value, Number(config.settings.smallFileFilter || 0)],
+  () => [smartAlbumCountSignature.value, libConfig._libraryId],
   () => { void refreshSmartAlbumCounts(); },
   { immediate: true },
 );
@@ -304,11 +310,22 @@ function handleReorderOutsidePointerDown(event: PointerEvent) {
   reorderingSmartAlbumId.value = null;
 }
 
-onMounted(() => {
+onMounted(async () => {
   document.addEventListener('pointerdown', handleReorderOutsidePointerDown, true);
+  for (const eventName of ['album-updated', 'index_finished']) {
+    const stop = await listen(eventName, (event: any) => {
+      if (eventName === 'album-updated' && !event.payload?.filtersChanged) return;
+      void refreshSmartAlbumCounts();
+    });
+    if (smartCountsDisposed) { stop(); return; }
+    unlistenSmartCounts.push(stop);
+  }
 });
 
 onBeforeUnmount(() => {
+  smartCountsDisposed = true;
+  ++smartCountRequest;
+  unlistenSmartCounts.forEach(stop => stop());
   document.removeEventListener('pointerdown', handleReorderOutsidePointerDown, true);
 });
 

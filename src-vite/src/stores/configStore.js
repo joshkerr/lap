@@ -66,6 +66,7 @@ export const useConfigStore = defineStore('configStore', {
     },
 
     mediaViewer: {
+      isFullScreen: false,  // remember preview fullscreen independently of ImageViewer
       isZoomFit: true,      // true: zoom to fit container; false: original size(scale = 1)
       isPinned: true,       // pinned mode
       pinnedPosition: 'top', // 'top' | 'bottom'
@@ -119,7 +120,6 @@ export const useConfigStore = defineStore('configStore', {
       categorySort: 0,            // category_sort_options: 0=name asc, 1=name desc, 2=count asc, 3=count desc
       showSubfolderFiles: false,  // show subfolder files (in album folder view)
       groupRawJpegPairs: false,   // group matching RAW and JPEG/HEIC files
-      smallFileFilter: 0,         // 0 | 160 | 320 | 640: hide files below this width and height
       
       // grid view settings
       thumbnailSize: 512,         // gallery thumbnail quality: 256, 512, or 1024
@@ -145,7 +145,6 @@ export const useConfigStore = defineStore('configStore', {
       slideShowTransition: 0,    // 0: Slide, 1: Fade, 2: None
       navigatorViewMode: 0,      // 0: Auto, 1: Always show, 2: Always hide
       navigatorViewSize: 240,    // navigator view size (160, 240, 320, 400)
-      dblClickAction: 'quickPreview', // quickPreview | newWindow
       viewBackground: 0,         // 0: default, 1: black, 2: dark gray, 3: medium gray, 4: light gray, 5: white
       autoPlayVideo: true,       // auto play video
       loopVideo: false,          // loop video (only effective when autoPlayVideo is off)
@@ -271,10 +270,6 @@ export const useConfigStore = defineStore('configStore', {
     setShowSubfolderFiles(showSubfolderFiles) {
       this.settings.showSubfolderFiles = showSubfolderFiles;
     },
-    setSmallFileFilter(smallFileFilter) {
-      const value = Number(smallFileFilter);
-      this.settings.smallFileFilter = [160, 320, 640].includes(value) ? value : 0;
-    },
 
     // video settings
     setVideoMuted(videoMuted) {
@@ -344,9 +339,6 @@ export const useConfigStore = defineStore('configStore', {
     },
     setViewBackground(viewBackground) {
       this.settings.viewBackground = viewBackground;
-    },
-    setDblClickAction(action) {
-      this.settings.dblClickAction = action === 'newWindow' ? 'newWindow' : 'quickPreview';
     },
     cycleViewBackground() {
       this.settings.viewBackground = (Number(this.settings.viewBackground || 0) + 1) % 6;

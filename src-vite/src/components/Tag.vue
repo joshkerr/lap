@@ -786,7 +786,6 @@ watch(
 watch(
   () => [
     config.settings.categorySort,
-    config.settings.smallFileFilter,
     libConfig._libraryId,
   ],
   () => {

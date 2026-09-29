@@ -72,7 +72,7 @@
     },
     "edit": {
       "title_add": "Novo álbum",
-      "title": "Info do álbum",
+      "title": "Editar álbum",
       "folder": "Pasta",
       "select_folder": "Selecionar pasta",
       "name": "Nome",
@@ -92,10 +92,32 @@
       "scanning_files": "{current}/{total} arquivos ({size})",
       "files_count": "{count} arquivos ({size})",
       "files_count_without_size": "{count} arquivos",
+      "section_scan_preview": "Prévia da verificação",
+      "excluded_files": "Excluídos",
+      "preview_updating": "Atualizando…",
+      "preview_unavailable": "Prévia da verificação indisponível",
       "files_counting": "Contando arquivos...",
       "created_at": "Criado em",
       "modified_at": "Modificado em",
-      "last_scan_time": "Última verificação"
+      "last_scan_time": "Última verificação",
+      "tab_general": "Geral",
+      "file_types": "Excluir tipos de arquivo",
+      "photos": "Fotos",
+      "raw": "RAW",
+      "file_types_required": "Mantenha pelo menos um tipo de arquivo incluído.",
+      "pixel_filter": "Excluir imagens pequenas",
+      "filter_off": "Desativado",
+      "pixel_hint": "Exclui imagens cuja largura e altura sejam inferiores a este valor.",
+      "excluded_folders": "Excluir pastas",
+      "excluded_hint": "Selecione as subpastas de primeiro nível a excluir, incluindo todo o seu conteúdo.",
+      "search_folders": "Buscar pastas",
+      "loading_folders": "Carregando pastas…",
+      "folders_unavailable": "As pastas estão indisponíveis. As exclusões salvas serão mantidas.",
+      "no_subfolders": "Não há subpastas de primeiro nível.",
+      "save_update": "Salvar e atualizar",
+      "save_failed": "Não foi possível salvar as configurações do álbum. Tente novamente.",
+      "file_types_hint": "Os tipos de arquivo selecionados são excluídos deste álbum.",
+      "tab_exclusions": "Exclusões"
     },
     "no_albums": {
       "title": "Sem álbuns",
@@ -639,7 +661,7 @@
     },
     "album": {
       "add": "Novo álbum",
-      "edit": "Info do álbum...",
+      "edit": "Editar álbum...",
       "scan": "Escanear álbum",
       "reorder": "Reordenar",
       "pause_scan": "Pausar varredura",
@@ -927,6 +949,15 @@
     },
     "select_file": {
       "error": "Falha ao selecionar arquivo."
+    },
+    "file_refresh": {
+      "status": "Estado da atualização",
+      "running": "Atualizando…",
+      "cancelling": "Cancelando…",
+      "cancelled": "Cancelado",
+      "complete": "Concluído",
+      "succeeded": "Atualizados: {count}",
+      "failed": "Falhas: {count}"
     },
     "image_editor": {
       "title": "Editar",
@@ -1231,9 +1262,6 @@
       "section_file_display": "Exibição de arquivos",
       "group_raw_jpeg_pairs": "Agrupar pares RAW",
       "group_raw_jpeg_pairs_hint": "Mostrar arquivos RAW e JPEG/HEIC correspondentes como um único item",
-      "small_file_filter": "Filtro de arquivos pequenos",
-      "small_file_filter_hint": "Oculta arquivos quando a largura e a altura são menores que o tamanho selecionado",
-      "small_file_filter_options": ["Desativado", "160 px", "320 px", "640 px"],
       "section_sorting": "Ordenação",
       "folder_sort": "Pastas",
       "folder_sort_hint": "Ordem de classificação das pastas exibidas dentro dos álbuns",
@@ -1265,9 +1293,6 @@
     "grid": {
       "title": "Layout",
       "section_grid": "Grade",
-      "dbl_click_thumbnail": "Clique duas vezes na miniatura",
-      "dbl_click_quick_preview": "Visualização rápida",
-      "dbl_click_new_window": "Abrir em nova janela",
       "style": "Estilo",
       "style_options": [
         "Visualização em cartões",

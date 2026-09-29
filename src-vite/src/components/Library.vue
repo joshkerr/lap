@@ -209,13 +209,11 @@ let libraryCountRequest = 0;
 async function refreshLibraryCounts() {
   const request = ++libraryCountRequest;
   const libraryId = libConfig._libraryId;
-  const smallFileFilter = Number(config.settings.smallFileFilter || 0);
-  const counts = await getLibraryVisibleCounts(smallFileFilter);
+  const counts = await getLibraryVisibleCounts();
   if (
     !counts
     || request !== libraryCountRequest
     || libraryId !== libConfig._libraryId
-    || smallFileFilter !== Number(config.settings.smallFileFilter || 0)
   ) return;
   libConfig.library.counts = {
     all: counts.all, favorite: counts.favorite, today: counts.today,
@@ -226,9 +224,6 @@ async function refreshLibraryCounts() {
 }
 onMounted(() => { void refreshLibraryCounts(); });
 const isActiveLibraryView = () => libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.LIBRARY;
-watch(() => config.settings.smallFileFilter, () => {
-  if (isActiveLibraryView()) void refreshLibraryCounts();
-});
 watch(() => [config.main.sidebarIndex, libConfig.activePane], () => {
   if (isActiveLibraryView()) void refreshLibraryCounts();
 });

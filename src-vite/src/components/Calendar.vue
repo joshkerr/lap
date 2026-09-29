@@ -115,6 +115,7 @@
 
 import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { fileInfoRevision } from '@/common/fileInfoRefresh';
 import { config, libConfig } from '@/common/config';
 import { getTakenDates } from '@/common/api';
 import { formatDate } from '@/common/utils';
@@ -260,8 +261,13 @@ watch(() => [config.calendar.view, config.settings.calendarSort], () => {
   scrollToSelected();
 });
 
+// Keep the current filter even if its last file moves out of this category.
+watch(fileInfoRevision, async () => {
+  if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.CALENDAR) await getCalendarDates(true);
+});
+
 // Only refresh the active view. Inactive panel data is refreshed on re-entry.
-watch(() => [config.settings.calendarSort, config.settings.smallFileFilter], async () => {
+watch(() => [config.settings.calendarSort], async () => {
   if (libConfig.activePane === 'main' && config.main.sidebarIndex === SIDEBAR.CALENDAR) await getCalendarDates();
 });
 
@@ -375,7 +381,7 @@ function expandSelectedCalendarPath() {
 }
 
 /// fetch calendar dates
-async function getCalendarDates() {
+async function getCalendarDates(preserveFilter = false) {
   const requestVersion = ++calendarRequestVersion;
   const libraryId = libConfig._libraryId;
   isLoading.value = true;
@@ -384,7 +390,7 @@ async function getCalendarDates() {
     if (!isCalendarMounted || requestVersion !== calendarRequestVersion || libraryId !== libConfig._libraryId) return;
     if (taken_dates) {
       calendar_dates.value = transformArray(taken_dates);
-      validateCalendarSelection();
+      if (!preserveFilter) validateCalendarSelection();
       if (calendarView.value === 'years') expandSelectedCalendarPath();
     }
   } finally {

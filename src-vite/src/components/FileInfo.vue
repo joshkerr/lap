@@ -169,8 +169,8 @@
                   v-model="renamingName"
                   class="text-[12px] text-base-content input input-xs input-bordered p-1 h-6 leading-6 w-full min-w-0"
                   @blur="finishRename"
-                  @keydown.enter="finishRename"
-                  @keydown.esc="cancelRename"
+                  @keydown.enter.stop="finishRename"
+                  @keydown.esc.stop="cancelRename"
                   @click.stop
                 />
                 <span

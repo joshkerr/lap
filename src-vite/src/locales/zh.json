@@ -72,7 +72,7 @@
     },
     "edit": {
       "title_add": "新建相册",
-      "title": "相册信息",
+      "title": "编辑相册",
       "folder": "文件夹",
       "select_folder": "选择文件夹",
       "name": "名称",
@@ -92,10 +92,32 @@
       "scanning_files": "{current}/{total} 个文件 ({size})",
       "files_count": "{count} 个文件 ({size})",
       "files_count_without_size": "{count} 个文件",
+      "section_scan_preview": "扫描预览",
+      "excluded_files": "已排除",
+      "preview_updating": "更新中…",
+      "preview_unavailable": "无法获取扫描预览",
       "files_counting": "正在统计文件...",
       "created_at": "创建时间",
       "modified_at": "修改时间",
-      "last_scan_time": "最近扫描"
+      "last_scan_time": "最近扫描",
+      "tab_general": "常规",
+      "file_types": "排除文件类型",
+      "photos": "照片",
+      "raw": "RAW",
+      "file_types_required": "请至少保留一种文件类型。",
+      "pixel_filter": "排除小尺寸图片",
+      "filter_off": "关闭",
+      "pixel_hint": "排除宽度和高度都小于所选值的图片。",
+      "excluded_folders": "排除文件夹",
+      "excluded_hint": "选择根目录下的一级子文件夹，将排除其中所有层级的内容。",
+      "search_folders": "搜索文件夹",
+      "loading_folders": "正在加载文件夹…",
+      "folders_unavailable": "暂时无法读取文件夹，已保存的排除项会保留。",
+      "no_subfolders": "没有一级子文件夹。",
+      "save_update": "保存并更新",
+      "save_failed": "无法保存相册设置，请重试。",
+      "file_types_hint": "勾选的文件类型将从此相册中排除。",
+      "tab_exclusions": "排除项"
     },
     "no_albums": {
       "title": "还没有相册",
@@ -639,7 +661,7 @@
     },
     "album": {
       "add": "新建相册",
-      "edit": "相册信息...",
+      "edit": "编辑相册...",
       "scan": "扫描相册",
       "reorder": "重新排序",
       "pause_scan": "暂停扫描",
@@ -927,6 +949,15 @@
     },
     "select_file": {
       "error": "选择文件失败。"
+    },
+    "file_refresh": {
+      "status": "刷新状态",
+      "running": "正在刷新…",
+      "cancelling": "正在取消…",
+      "cancelled": "已取消",
+      "complete": "已完成",
+      "succeeded": "已更新：{count}",
+      "failed": "失败：{count}"
     },
     "image_editor": {
       "title": "编辑",
@@ -1231,9 +1262,6 @@
       "section_file_display": "文件显示",
       "group_raw_jpeg_pairs": "合并显示 RAW 配对",
       "group_raw_jpeg_pairs_hint": "将同名的 RAW 与 JPEG/HEIC 文件合并显示为一个条目",
-      "small_file_filter": "小文件过滤",
-      "small_file_filter_hint": "仅当宽度和高度均小于所选尺寸时隐藏文件",
-      "small_file_filter_options": ["关闭", "160 px", "320 px", "640 px"],
       "section_sorting": "排序",
       "folder_sort": "文件夹",
       "folder_sort_hint": "相册下显示的文件夹排序方式",
@@ -1265,9 +1293,6 @@
     "grid": {
       "title": "布局",
       "section_grid": "网格",
-      "dbl_click_thumbnail": "双击缩略图",
-      "dbl_click_quick_preview": "快速预览",
-      "dbl_click_new_window": "在新窗口中打开",
       "style": "样式",
       "style_options": [
         "卡片视图",

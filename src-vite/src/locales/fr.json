@@ -72,7 +72,7 @@
     },
     "edit": {
       "title_add": "Nouvel album",
-      "title": "Info album",
+      "title": "Modifier l’album",
       "folder": "Dossier",
       "select_folder": "Choisir dossier",
       "name": "Nom",
@@ -92,10 +92,32 @@
       "scanning_files": "{current}/{total} fichiers ({size})",
       "files_count": "{count} fichiers ({size})",
       "files_count_without_size": "{count} fichiers",
+      "section_scan_preview": "Aperçu de l’analyse",
+      "excluded_files": "Exclus",
+      "preview_updating": "Actualisation…",
+      "preview_unavailable": "Aperçu de l’analyse indisponible",
       "files_counting": "Comptage...",
       "created_at": "Créé le",
       "modified_at": "Modifié le",
-      "last_scan_time": "Dernier scan"
+      "last_scan_time": "Dernier scan",
+      "tab_general": "Général",
+      "file_types": "Exclure des types de fichiers",
+      "photos": "Photos",
+      "raw": "RAW",
+      "file_types_required": "Conservez au moins un type de fichier inclus.",
+      "pixel_filter": "Exclure les petites images",
+      "filter_off": "Désactivé",
+      "pixel_hint": "Exclure les images dont la largeur et la hauteur sont toutes deux inférieures à cette valeur.",
+      "excluded_folders": "Exclure des dossiers",
+      "excluded_hint": "Sélectionnez les sous-dossiers de premier niveau à exclure, avec tout leur contenu.",
+      "search_folders": "Rechercher des dossiers",
+      "loading_folders": "Chargement des dossiers…",
+      "folders_unavailable": "Les dossiers sont indisponibles. Les exclusions enregistrées sont conservées.",
+      "no_subfolders": "Aucun sous-dossier de premier niveau.",
+      "save_update": "Enregistrer et actualiser",
+      "save_failed": "Impossible d’enregistrer les paramètres de l’album. Veuillez réessayer.",
+      "file_types_hint": "Les types de fichiers sélectionnés sont exclus de cet album.",
+      "tab_exclusions": "Exclusions"
     },
     "no_albums": {
       "title": "Aucun album",
@@ -639,7 +661,7 @@
     },
     "album": {
       "add": "Nouvel album",
-      "edit": "Info album...",
+      "edit": "Modifier l’album...",
       "scan": "Scanner l'album",
       "reorder": "Réorganiser",
       "pause_scan": "Mettre en pause le scan",
@@ -927,6 +949,15 @@
     },
     "select_file": {
       "error": "Échec sélection fichier."
+    },
+    "file_refresh": {
+      "status": "État de l’actualisation",
+      "running": "Actualisation…",
+      "cancelling": "Annulation…",
+      "cancelled": "Annulé",
+      "complete": "Terminé",
+      "succeeded": "Actualisés : {count}",
+      "failed": "Échecs : {count}"
     },
     "image_editor": {
       "title": "Modifier",
@@ -1231,9 +1262,6 @@
       "section_file_display": "Affichage des fichiers",
       "group_raw_jpeg_pairs": "Regrouper les paires RAW",
       "group_raw_jpeg_pairs_hint": "Afficher les fichiers RAW et JPEG/HEIC correspondants comme un seul élément",
-      "small_file_filter": "Filtre des petits fichiers",
-      "small_file_filter_hint": "Masque les fichiers lorsque leur largeur et leur hauteur sont inférieures à la taille choisie",
-      "small_file_filter_options": ["Désactivé", "160 px", "320 px", "640 px"],
       "section_sorting": "Tri",
       "folder_sort": "Dossiers",
       "folder_sort_hint": "Ordre de tri des dossiers affichés sous les albums",
@@ -1265,9 +1293,6 @@
     "grid": {
       "title": "Disposition",
       "section_grid": "Grille",
-      "dbl_click_thumbnail": "Double-cliquer sur la miniature",
-      "dbl_click_quick_preview": "Aperçu rapide",
-      "dbl_click_new_window": "Ouvrir dans une nouvelle fenêtre",
       "style": "Style",
       "style_options": [
         "Vue carte",

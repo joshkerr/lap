@@ -221,6 +221,9 @@ async fn probe_json_with_timeout(file_path: &str, timeout_secs: u64) -> Result<V
     let mut cmd = ffprobe_command();
 
     cmd.args(["-v", "quiet"]);
+    if crate::t_image::is_heic_path(file_path) {
+        cmd.arg("-show_stream_groups");
+    }
     if should_skip_duration_probe(file_path) {
         cmd.args(["-skip_estimate_duration_from_pts", "1"]);
     }
@@ -410,10 +413,42 @@ fn should_retry_thumbnail_with_slow_seek(
     info.fmt.contains("mov") || info.v_codec == "hevc"
 }
 
+// FFmpeg exposes the HEIF primary item as default, either on a stream or a
+// Tile Grid group. Never treat a dependent tile as a complete image.
+fn heif_primary_image(probe: &Value) -> Result<(String, &Value), String> {
+    let groups = probe["stream_groups"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let streams = probe["streams"].as_array().map(Vec::as_slice).unwrap_or(&[]);
+    let candidates: Vec<_> = groups.iter()
+        .filter(|g| g["type"] == "Tile Grid")
+        .chain(streams.iter().filter(|s| s["codec_type"] == "video"
+            && s["disposition"]["dependent"] != 1))
+        .collect();
+    let primary = candidates.iter().copied()
+        .find(|item| item["disposition"]["default"] == 1)
+        .or_else(|| (candidates.len() == 1).then(|| candidates[0]))
+        .ok_or("Cannot identify HEIF primary image")?;
+    let index = primary["index"].as_u64().ok_or("Missing HEIF item index")?;
+    if primary["type"] == "Tile Grid" {
+        let grid = &primary["components"][0];
+        let map = if grid["nb_tiles"].as_u64().unwrap_or(0) > 1 {
+            // Select FFmpeg's internally assembled/cropped/rotated grid output.
+            format!("[0:g:{index}]")
+        } else {
+            let stream = grid["subcomponents"][0]["stream_index"].as_u64()
+                .ok_or("Missing HEIF grid tile")?;
+            format!("0:{stream}")
+        };
+        Ok((map, grid))
+    } else {
+        Ok((format!("0:{index}"), primary))
+    }
+}
+
 async fn run_thumbnail_command(
     file_path: &str,
     ffmpeg_threads: &str,
     filter: &str,
+    stream_map: &str,
     strategy: ThumbnailStrategy,
     timeout_secs: u64,
 ) -> Result<Option<Vec<u8>>, String> {
@@ -428,15 +463,17 @@ async fn run_thumbnail_command(
     if let ThumbnailStrategy::SlowSeek(t) = strategy {
         cmd.args(["-ss", &t.to_string()]);
     }
+    if stream_map.starts_with('[') {
+        // Grid outputs are complex filters; append scaling to that graph.
+        cmd.args(["-filter_complex", &format!("{stream_map}{filter}[thumb]"), "-map", "[thumb]"]);
+    } else {
+        cmd.args(["-map", stream_map, "-vf", filter]);
+    }
     cmd.args([
-        "-map",
-        "0:v:0",
         "-vframes",
         "1",
         "-an",
         "-sn",
-        "-vf",
-        filter,
         "-c:v",
         "mjpeg",
         "-f",
@@ -491,6 +528,11 @@ pub async fn get_video_thumbnail(
     seek_percent: Option<u8>,
 ) -> Result<Option<Vec<u8>>, String> {
     let probe = probe_json_async(file_path).await.ok();
+    let stream_map = if crate::t_image::is_heic_path(file_path) {
+        heif_primary_image(probe.as_ref().ok_or("Cannot probe HEIF primary image")?)?.0
+    } else {
+        "0:v:0".to_string()
+    };
     let probe_info = probe.as_ref().map(ThumbnailProbeInfo::from_probe);
     let duration = if let Some(d) = known_duration {
         d
@@ -524,7 +566,7 @@ pub async fn get_video_thumbnail(
             }
         });
 
-    match run_thumbnail_command(file_path, &ffmpeg_threads, &filter, primary_strategy, 20).await {
+    match run_thumbnail_command(file_path, &ffmpeg_threads, &filter, &stream_map, primary_strategy, 20).await {
         Ok(result) => return Ok(result),
         Err(err) => {
             if should_retry_thumbnail_with_slow_seek(
@@ -537,6 +579,7 @@ pub async fn get_video_thumbnail(
                     file_path,
                     &ffmpeg_threads,
                     &filter,
+                    &stream_map,
                     ThumbnailStrategy::SlowSeek(seek_time),
                     20,
                 )
@@ -552,6 +595,7 @@ pub async fn get_video_thumbnail(
         file_path,
         &ffmpeg_threads,
         &filter,
+        &stream_map,
         ThumbnailStrategy::FirstFrame,
         15,
     )
@@ -600,18 +644,7 @@ pub struct VideoMetadata {
     pub content_identifier: Option<String>,
 }
 
-pub async fn get_video_metadata_async(file_path: &str) -> Result<VideoMetadata, String> {
-    let json = probe_json_with_timeout(file_path, INDEX_PROBE_TIMEOUT_SECS).await?;
-
-    // Extract stream info
-    let streams = json["streams"]
-        .as_array()
-        .ok_or("No streams found in video")?;
-    let video = streams
-        .iter()
-        .find(|s| s["codec_type"] == "video")
-        .ok_or("No video stream found")?;
-
+fn video_dimensions(video: &Value) -> (u32, u32) {
     let mut w = video["width"].as_u64().unwrap_or(0) as u32;
     let mut h = video["height"].as_u64().unwrap_or(0) as u32;
 
@@ -641,6 +674,32 @@ pub async fn get_video_metadata_async(file_path: &str) -> Result<VideoMetadata, 
     if rotation == 90 || rotation == 270 {
         std::mem::swap(&mut w, &mut h);
     }
+
+    (w, h)
+}
+
+pub async fn get_video_metadata_async(file_path: &str) -> Result<VideoMetadata, String> {
+    let json = probe_json_with_timeout(file_path, INDEX_PROBE_TIMEOUT_SECS).await?;
+
+    if crate::t_image::is_heic_path(file_path) {
+        let (_, primary) = heif_primary_image(&json)?;
+        let (width, height) = video_dimensions(primary);
+        if width == 0 || height == 0 {
+            return Err("Missing HEIF primary image dimensions".to_string());
+        }
+        return Ok(VideoMetadata { width, height, ..Default::default() });
+    }
+
+    // Extract stream info
+    let streams = json["streams"]
+        .as_array()
+        .ok_or("No streams found in video")?;
+    let video = streams
+        .iter()
+        .find(|s| s["codec_type"] == "video")
+        .ok_or("No video stream found")?;
+
+    let (w, h) = video_dimensions(video);
 
     // Extract duration
     let duration = json["format"]["duration"]

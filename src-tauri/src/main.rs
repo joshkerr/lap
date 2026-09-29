@@ -21,6 +21,7 @@ mod t_cmds;
 mod t_common;
 mod t_config;
 mod t_dedup;
+mod t_embedded_jpeg;
 mod t_face;
 mod t_heif;
 mod t_http;
@@ -263,6 +264,7 @@ async fn main() {
             t_cmds::select_folder,
             t_cmds::fetch_folder,
             t_cmds::count_folder,
+            t_cmds::list_album_subfolders,
             t_cmds::create_folder,
             t_cmds::rename_folder,
             t_cmds::move_folder,
@@ -348,6 +350,7 @@ async fn main() {
             t_cmds::get_file_thumbs,
             t_cmds::get_file_info,
             t_cmds::update_file_info,
+            t_cmds::refresh_selected_file_info,
             t_cmds::prepare_motion_photo_video,
             t_cmds::add_file_to_db,
             t_cmds::check_file_exists,

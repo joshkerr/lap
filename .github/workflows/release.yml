@@ -21,6 +21,11 @@ on:
 permissions:
   contents: write
 
+env:
+  # Pin the Tauri CLI so bundled-linuxdeploy/GTK-hook changes in a floating
+  # `@tauri-apps/cli@v2` cannot silently break packaging. Bump deliberately.
+  TAURI_CLI_VERSION: '2.12.0'
+
 jobs:
   setup:
     runs-on: ubuntu-latest
@@ -136,6 +141,9 @@ jobs:
         shell: bash
         run: rm -rf src-tauri/target/${{ matrix.target }}/release/bundle
 
+      - name: Install pinned Tauri CLI
+        run: npm install -g @tauri-apps/cli@${{ env.TAURI_CLI_VERSION }}
+
       - name: Build and Sign (macOS ${{ matrix.arch }})
         if: contains(matrix.platform, 'macos')
         uses: tauri-apps/tauri-action@v0.5
@@ -149,6 +157,7 @@ jobs:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
+          tauriScript: tauri
           args: --verbose --target ${{ matrix.target }}
 
       - name: Build and Sign (Linux ${{ matrix.arch }})
@@ -161,6 +170,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: .
+          tauriScript: tauri
           args: --verbose --target ${{ matrix.target }} --bundles deb,appimage
 
       - name: Strip bundled Wayland client and add update info

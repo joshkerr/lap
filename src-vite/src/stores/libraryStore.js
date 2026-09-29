@@ -5,7 +5,6 @@ import { defineStore } from 'pinia';
 import { getCurrentLibraryState, saveLibraryState, getAppConfig } from '@/common/api';
 import { CULLING, LIB_ITEM } from '@/common/constants';
 import { setThumbLibraryId } from '@/common/utils';
-import { useConfigStore } from '@/stores/configStore';
 
 // The app-level deep watcher calls save() for every store mutation. Keep the
 // last actual payload per library so runtime-only count refreshes do not turn
@@ -28,9 +27,6 @@ export const useLibraryStore = defineStore('libraryStore', {
     _libraryId: null,
     _initialized: false,
 
-    // Small-file filter value the persisted lazy sidebar counts were computed
-    // under; counts are dropped on load when it differs from the live setting.
-    countsFilter: 0,
 
     // Per-library state
     /** @type {'main' | 'collection'} */
@@ -172,8 +168,6 @@ export const useLibraryStore = defineStore('libraryStore', {
               Object.assign(this[key], backendState[key]);
             }
           });
-          // Scalar fields are not covered by the object merge above.
-          this.countsFilter = Number(backendState.countsFilter || 0);
         }
         this.index.status = Number(this.index.status || 0);
         this.index.phase = this.index.phase || 'discovering';
@@ -186,13 +180,6 @@ export const useLibraryStore = defineStore('libraryStore', {
 
         this._initialized = true;
 
-        // Lazy sidebar counts are only valid under the small-file filter they
-        // were computed with. The filter is global while counts persist per
-        // library, so drop counts saved under a different value (covers library
-        // switches and restarts, not just live setting changes).
-        if (this.countsFilter !== Number(useConfigStore().settings.smallFileFilter || 0)) {
-          this.clearLazySidebarCounts();
-        }
 
         // Always pause on restart — never auto-resume scanning
         if (this.index.status === 1) {
@@ -217,7 +204,7 @@ export const useLibraryStore = defineStore('libraryStore', {
     },
 
     /**
-     * Invalidate counts derived under a previous small-file filter. Real-time
+     * Invalidate counts after album exclusions change. Real-time
      * aggregates are runtime-only; delayed counts are also cleared here before
      * their next explicit item activation. Folder file counts are ephemeral
      * and cleared separately via clearFolderFileCounts().
@@ -237,7 +224,6 @@ export const useLibraryStore = defineStore('libraryStore', {
           typeof item === 'string' ? item : { ...item, count: null },
         );
       }
-      this.countsFilter = Number(useConfigStore().settings.smallFileFilter || 0);
     },
 
     async save() {
@@ -279,7 +265,6 @@ export const useLibraryStore = defineStore('libraryStore', {
             location: this.location,
             search: this.search,
             destFolder: this.destFolder,
-            countsFilter: this.countsFilter,
             index: {
               status: this.index.status,
               albumQueue: this.index.albumQueue,

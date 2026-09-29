@@ -390,9 +390,9 @@ export async function recountAlbum(albumId) {
   return null;
 }
 
-export async function getAlbumVisibleCounts(smallFileFilter = config.settings.smallFileFilter) {
+export async function getAlbumVisibleCounts() {
   try {
-    return await invoke('get_album_visible_counts', { smallFileFilter });
+    return await invoke('get_album_visible_counts');
   } catch (error) {
     console.error('getAlbumVisibleCounts:', error);
   }
@@ -400,12 +400,13 @@ export async function getAlbumVisibleCounts(smallFileFilter = config.settings.sm
 }
 
 // add an album to db
-export async function addAlbum(folderPath) {
+export async function addAlbum(folderPath, name, description, filters) {
   if(!folderPath) {
     return null;
   }
   try {
-    const newAlbum = await invoke('add_album', { folderPath });
+    const { fileTypes, smallImageFilter, excludedFolders } = filters;
+    const newAlbum = await invoke('add_album', { folderPath, name, description, fileTypes, smallImageFilter, excludedFolders });
     console.log('add_album', newAlbum);
     if(newAlbum) {
       return {
@@ -421,9 +422,10 @@ export async function addAlbum(folderPath) {
 }
 
 // edit an album's profile
-export async function editAlbum(albumId, newName, newDespription) {
+export async function editAlbum(albumId, newName, newDescription, filters) {
   try {
-    const album = await invoke('edit_album', { id: albumId, name: newName, description: newDespription });
+    const { fileTypes, smallImageFilter, excludedFolders } = filters;
+    const album = await invoke('edit_album', { id: albumId, name: newName, description: newDescription, fileTypes, smallImageFilter, excludedFolders });
     console.log('edit_album', album);
     if (album) {
       return album;
@@ -616,9 +618,10 @@ export async function expandFinalFolder(rootFolder, finalPath) {
 }
 
 // recurse all files under the path(include all sub-folders), and count the number of files
-export async function countFolder(path) {
+export async function countFolder(path, filters = {}) {
   try {
-    const result = await invoke('count_folder', { path });
+    const { fileTypes, smallImageFilter, excludedFolders } = filters;
+    const result = await invoke('count_folder', { path, fileTypes, smallImageFilter, excludedFolders });
     if(result) {
       return result;
     };
@@ -738,8 +741,8 @@ export async function getQueryCountAndSum(params) {
   return null;
 }
 
-export async function getLibraryVisibleCounts(smallFileFilter = config.settings.smallFileFilter) {
-  try { return await invoke('get_library_visible_counts', { smallFileFilter }); }
+export async function getLibraryVisibleCounts() {
+  try { return await invoke('get_library_visible_counts'); }
   catch (error) { console.error('getLibraryVisibleCounts:', error); }
   return null;
 }
@@ -865,9 +868,9 @@ export async function listCollections() {
   return null;
 }
 
-export async function getCollectionCounts(smallFileFilter = config.settings.smallFileFilter) {
+export async function getCollectionCounts() {
   try {
-    return await invoke('get_collection_counts', { smallFileFilter });
+    return await invoke('get_collection_counts');
   } catch (error) {
     console.error('Failed to get collection counts:', error);
   }
@@ -1527,8 +1530,8 @@ export async function getTagGroupName(id) {
   return invoke('get_tag_group_name', { id });
 }
 
-export async function getTagGroups(smallFileFilter = config.settings.smallFileFilter) {
-  return invoke('get_tag_groups', { smallFileFilter });
+export async function getTagGroups() {
+  return invoke('get_tag_groups');
 }
 
 export async function saveTagGroup(id, name) {
@@ -1548,9 +1551,9 @@ export async function moveTagsToGroup(tagIds, groupId) {
 }
 
 // get all tags
-export async function getAllTags(sort = 0, smallFileFilter = config.settings.smallFileFilter) {
+export async function getAllTags(sort = 0) {
   try {
-    const tags = await invoke('get_all_tags', { sort, smallFileFilter });
+    const tags = await invoke('get_all_tags', { sort });
     console.log('getAllTags:', tags);
     if (tags) {
       return tags;
@@ -1561,9 +1564,9 @@ export async function getAllTags(sort = 0, smallFileFilter = config.settings.sma
   return null;
 }
 
-export async function getTagCounts(smallFileFilter = config.settings.smallFileFilter) {
+export async function getTagCounts() {
   try {
-    return await invoke('get_tag_counts', { smallFileFilter });
+    return await invoke('get_tag_counts');
   } catch (error) {
     console.error('Failed to get tag counts:', error);
   }
@@ -1672,9 +1675,9 @@ export async function applyTagsToFiles(fileIds, addTagIds, removeTagIds) {
 // calendar
 
 // get taken dates
-export async function getTakenDates(sort = 0, smallFileFilter = config.settings.smallFileFilter) {
+export async function getTakenDates(sort = 0) {
   try {
-    const taken_dates = await invoke('get_taken_dates', { sort, smallFileFilter });
+    const taken_dates = await invoke('get_taken_dates', { sort });
     if (taken_dates) {
       return taken_dates;
     }
@@ -1687,9 +1690,9 @@ export async function getTakenDates(sort = 0, smallFileFilter = config.settings.
 // camera
 
 // get camera info
-export async function getCameraInfo(sort = 0, smallFileFilter = config.settings.smallFileFilter) {
+export async function getCameraInfo(sort = 0) {
   try {
-    const cameraInfo = await invoke('get_camera_info', { sort, smallFileFilter });
+    const cameraInfo = await invoke('get_camera_info', { sort });
     if (cameraInfo) {
       return cameraInfo;
     }
@@ -1700,9 +1703,9 @@ export async function getCameraInfo(sort = 0, smallFileFilter = config.settings.
 }
 
 // get lens info
-export async function getLensInfo(sort = 0, smallFileFilter = config.settings.smallFileFilter) {
+export async function getLensInfo(sort = 0) {
   try {
-    const lensInfo = await invoke('get_lens_info', { sort, smallFileFilter });
+    const lensInfo = await invoke('get_lens_info', { sort });
     if (lensInfo) {
       return lensInfo;
     }
@@ -1715,9 +1718,9 @@ export async function getLensInfo(sort = 0, smallFileFilter = config.settings.sm
 // location
 
 // get location info
-export async function getLocationInfo(sort = 0, smallFileFilter = config.settings.smallFileFilter) {
+export async function getLocationInfo(sort = 0) {
   try {
-    const locationInfo = await invoke('get_location_info', { sort, smallFileFilter });
+    const locationInfo = await invoke('get_location_info', { sort });
     if (locationInfo) {
       return locationInfo;
     }
@@ -2055,9 +2058,9 @@ export async function isFaceIndexing() {
 }
 
 // get face indexing stats
-export async function getFaceStats(smallFileFilter = config.settings.smallFileFilter) {
+export async function getFaceStats() {
   try {
-    return await invoke('get_face_stats', { smallFileFilter });
+    return await invoke('get_face_stats');
   } catch (error) {
     console.error('Failed to get face stats:', error);
     return null;
@@ -2146,4 +2149,8 @@ export async function getPersonThumbnail(personId) {
     console.error('Failed to get person thumbnail:', error);
   }
   return null;
+}
+
+export async function listAlbumSubfolders(path) {
+  return invoke('list_album_subfolders', { path });
 }
